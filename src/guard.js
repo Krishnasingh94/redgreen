@@ -42,6 +42,8 @@ const CART_EXPORTS = ['COUPONS', 'createCart', 'subtotal', 'addItem', 'setQuanti
 export function normalizeTestCode(code) {
   if (typeof code !== 'string') return code;
   let c = code.replace(/^\s*```(?:js|javascript)?\s*\n?|```\s*$/g, '').trim() + '\n';
+  // Repair a frequent small-model typo in object literals: `{ name': 'x' }` -> `{ name: 'x' }` (never valid JS).
+  c = c.replace(/([{,]\s*)([A-Za-z_$][\w$]*)'(\s*:)/g, '$1$2$3');
   const header = [];
   if (!/from\s+['"]node:test['"]/.test(c)) header.push("import { test } from 'node:test';");
   if (!/from\s+['"]node:assert(\/strict)?['"]/.test(c) && /\bassert\b/.test(c)) header.push("import assert from 'node:assert/strict';");
