@@ -12,6 +12,7 @@
     "smoke": "node scripts/smoke-model.js",
     "reset": "node scripts/reset.js",
     "sample": "node scripts/make-sample.js",
-    "check:sandbox": "node scripts/check-sandbox.js"
+    "check:sandbox": "node scripts/check-sandbox.js",
+    "eval": "node scripts/eval.js"
   }
 }

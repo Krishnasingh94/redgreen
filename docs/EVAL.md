@@ -1,7 +1,7 @@
 # Evaluation log (real runs, no estimates)
 
 Hardware: Lenovo LOQ, RTX 4050 6 GB, 16 GB RAM, Windows. Model: `google/gemma-4-e4b` (Q4_K_M) in LM Studio, local.
-Scenario: the one planted bug in `fixtures/shop` (stale coupon discount after quantity change), same captured report each run.
+Scenario: planted bug 1 in `fixtures/shop` (stale coupon discount after quantity change, `rpt_sample`), same captured report each run. Bug 2 (invalid coupon drops the applied one, `rpt_sample_coupon`) was added later and is not in this log yet; measure it with `npm run eval -- 5 rpt_sample_coupon`.
 Max 3 attempts per phase. A run counts as GREEN only if the reproduction test failed before the patch and it plus the existing suite passed after.
 
 | Run | Pipeline version | Verdict | Total time | Repro attempts | Fix attempts |
@@ -30,4 +30,4 @@ Failure modes seen and what we changed:
 - Typo `name': 'x'` in object literals → deterministic repair (never valid JS) + an example in the prompt.
 - One reproduction test passed on the buggy code → correctly rejected by the gate, retried.
 
-Limitations: one bug, one app, small sample. These numbers say the loop works on this hardware, not that it generalises.
+Limitations: one bug, one app, small sample (bug 2 not yet measured). These numbers say the loop works on this hardware, not that it generalises.

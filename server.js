@@ -27,10 +27,14 @@ function serveFile(res, base, rel) {
 }
 async function readBody(req, limit = 8_000_000) {
   let size = 0; const chunks = [];
-  for await (const c of req) { size += c.length; if (size > limit) throw new Error('body too large'); chunks.push(c); }
-  return JSON.parse(Buffer.concat(chunks).toString() || '{}');
+  const fail = (status, msg) => Object.assign(new Error(msg), { status });
+  for await (const c of req) { size += c.length; if (size > limit) throw fail(413, `body too large (max ${limit} bytes)`); chunks.push(c); }
+  try { return JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { throw fail(400, 'invalid JSON body'); }
 }
-const listJson = (dir) => fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))).sort((a, b) => (b.savedAt || b.startedAt || '').localeCompare(a.savedAt || a.startedAt || ''));
+// One corrupt or half-written file must not take down the whole list: skip it (and log once).
+const skipped = new Set();
+const readJsonSafe = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { if (!skipped.has(f)) { skipped.add(f); console.warn(`[redgreen] skipping unreadable ${path.basename(f)}: ${e.message}`); } return null; } };
+const listJson = (dir, valid) => fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => readJsonSafe(path.join(dir, f))).filter((o) => o && typeof o === 'object' && valid(o)).sort((a, b) => (b.savedAt || b.startedAt || '').localeCompare(a.savedAt || a.startedAt || ''));
 
 let busy = false;
 
@@ -70,13 +74,21 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
       return send(res, 201, { id, redactions: count });
     }
-    if (p === '/api/reports' && req.method === 'GET') return send(res, 200, listJson(REPORTS).map(({ id, description, savedAt, events, redactions, sample, screenshot }) => ({ id, description, savedAt, events: events.length, redactions, sample: !!sample, screenshot: !!screenshot })));
+    if (p === '/api/reports' && req.method === 'GET') return send(res, 200, listJson(REPORTS, (r) => typeof r.id === 'string' && Array.isArray(r.events)).map(({ id, description, savedAt, events, redactions, sample, screenshot }) => ({ id, description, savedAt, events: events.length, redactions, sample: !!sample, screenshot: !!screenshot })));
     let m;
     if ((m = p.match(/^\/api\/reports\/([^/]+)$/))) {
       const id = safeId(m[1]); const f = id && path.join(REPORTS, id + '.json');
       return f && fs.existsSync(f) ? send(res, 200, fs.readFileSync(f, 'utf8')) : send(res, 404, { error: 'not found' });
     }
-    if (p === '/api/runs' && req.method === 'GET') return send(res, 200, listJson(RUNS).map(({ id, reportId, startedAt, verdict }) => ({ id, reportId, startedAt, verdict })));
+    if (p === '/api/runs' && req.method === 'GET') return send(res, 200, listJson(RUNS, (r) => typeof r.id === 'string' && typeof r.verdict === 'string').map(({ id, reportId, startedAt, verdict, reason }) => ({ id, reportId, startedAt, verdict, ...(reason ? { reason } : {}) })));
+    if ((m = p.match(/^\/api\/runs\/([^/]+)\/patch\.diff$/))) {
+      // Verified unified diff + repro test as a new file, for `git apply` from the repo root. Verified runs only.
+      const id = safeId(m[1]); const f = id && path.join(RUNS, id + '.json');
+      const run = f && fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : null;
+      if (!run || run.verdict !== 'fixed_verified' || !run.patch) return send(res, 404, { error: run ? 'no verified patch for this run' : 'not found' });
+      res.writeHead(200, { 'Content-Type': 'text/x-diff; charset=utf-8', 'Content-Disposition': `attachment; filename="redgreen-${run.id}.patch"`, 'Cache-Control': 'no-store' });
+      return res.end(run.patch);
+    }
     if ((m = p.match(/^\/api\/runs\/([^/]+)(\/pr\.md)?$/))) {
       const id = safeId(m[1]); const f = id && path.join(RUNS, id + '.json');
       if (!f || !fs.existsSync(f)) return send(res, 404, { error: 'not found' });
@@ -103,7 +115,9 @@ const server = http.createServer(async (req, res) => {
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
-    send(res, 500, { error: e.message });
+    // 413: the rest of the upload is still unread, so close the connection instead of reusing it.
+    if (e.status === 413) res.setHeader('Connection', 'close');
+    if (!res.headersSent) send(res, e.status || 500, { error: e.message }); else res.end();
   }
 });
 
