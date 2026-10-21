@@ -44,13 +44,19 @@ export async function resolveModel() {
   return gemma;
 }
 
+let lastStatus = null;
 export async function status() {
-  try {
-    const model = await resolveModel();
-    return { ok: true, model, baseUrl: modelConfig.baseUrl, local: isLocal(), gemma4: /gemma[-_ ]?4/i.test(model) };
-  } catch (e) {
-    return { ok: false, error: e.message, baseUrl: modelConfig.baseUrl, local: isLocal() };
-  }
+  // Never let the page wait on a busy model server: answer within 2 s, using the last known state if needed.
+  const check = (async () => {
+    try {
+      const model = await resolveModel();
+      return (lastStatus = { ok: true, model, baseUrl: modelConfig.baseUrl, local: isLocal(), gemma4: /gemma[-_ ]?4/i.test(model) });
+    } catch (e) {
+      return (lastStatus = { ok: false, error: e.message, baseUrl: modelConfig.baseUrl, local: isLocal() });
+    }
+  })();
+  const slow = new Promise((r) => setTimeout(() => r(lastStatus || { ok: false, checking: true, error: 'Still checking the model server…', baseUrl: modelConfig.baseUrl, local: isLocal() }), 2000));
+  return Promise.race([check, slow]);
 }
 
 // Extract the first top-level JSON object from model text (handles ```json fences and preambles).

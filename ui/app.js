@@ -107,20 +107,46 @@ document.addEventListener('submit', (e) => { const f = e.target.closest('.ghform
 
 /* ---------- views ---------- */
 function intro() {
-  $('#main').innerHTML = `<section class="intro">
-    <h1><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
-    <p>Most bug reports say “it's broken.” RedGreen turns a GitHub issue into a <b>check that fails on your code</b>, using Gemma 4 running on this laptop, and shows exactly where to look. Every claim is backed by a real run, never by the model's word.</p>
-    <form class="ghform big" id="ghIntro">
-      <label for="ghUrlIntro">Paste a GitHub issue from a website or JavaScript project</label>
-      <div class="ghrow"><input id="ghUrlIntro" type="url" placeholder="https://github.com/owner/repo/issues/1" required><button type="submit">Reproduce it</button></div>
-      <p class="gherr" role="alert"></p>
-    </form>
+  $('#main').innerHTML = `<section class="home">
+    <div class="hero">
+      <div class="hero-copy">
+        <h1><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
+        <p class="sub1">“It's broken” isn't a bug report. RedGreen turns a GitHub issue into a <b>check that fails on your code</b>, then shows where to look. Gemma 4 runs on this laptop, and every claim comes from a real run.</p>
+        <form class="ghform big" id="ghIntro">
+          <label for="ghUrlIntro">Paste a GitHub issue from a website or JavaScript project</label>
+          <div class="ghrow"><input id="ghUrlIntro" type="url" placeholder="https://github.com/owner/repo/issues/1" required><button type="submit">Reproduce it</button></div>
+          <p class="gherr" role="alert"></p>
+        </form>
+        <div class="chips"><span>Gemma 4 E4B, offline</span><span>Runs on a 6 GB laptop GPU</span><span>Never edits your code by default</span></div>
+      </div>
+      <figure class="replay" aria-label="A real exchange on GitHub: an issue, then RedGreen's reply">
+        <div class="gh-card issue-card">
+          <div class="gh-head"><span class="state">Open</span><b>Cart total is wrong after changing quantity with a coupon applied</b></div>
+          <p>Add Headphones, set quantity to 3, apply SAVE20, then set quantity back to 1.<br>Expected <b>$40.00</b>. Actual: the total shows <b>$20.00</b>.</p>
+          <div class="cmt"><span class="who">samvit-srivastava</span> commented <code>/redgreen</code></div>
+        </div>
+        <div class="gh-card bot-card">
+          <div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div>
+          <h3><i class="dotred"></i>Reproduced</h3>
+          <p class="small">This browser check <b>fails</b> on the current code:</p>
+          <pre class="mini"><span class="ok">✓ 1. click "button.add[data-id=hp]"</span><span class="ok">✓ 2. fill "Quantity of Headphones" "3"</span><span class="ok">✓ 3. fill "#coupon" "SAVE20"</span><span class="ok">✓ 4. click "#apply"</span><span class="ok">✓ 5. fill "Quantity of Headphones" "1"</span><span class="bad">✗ 6. expect "#total" to show "$40.00"</span><span class="bad">     actual: "$20.00"</span></pre>
+          <p class="small where">🔍 Where to look: <code>app.js</code>, <code>setQuantity()</code></p>
+        </div>
+        <figcaption>A real reply RedGreen posted on <a href="https://github.com/samvit-srivastava/tiny-shop/issues/1" target="_blank" rel="noopener">tiny-shop#1</a></figcaption>
+      </figure>
+    </div>
+
     <ol class="how">
-      <li><b>Find</b><span>RedGreen clones the repo, serves the site or runs its tests, and finds the code the issue talks about. The issue is treated as data, never as instructions.</span></li>
-      <li><b>Reproduce</b><span>Gemma 4 reads the issue, the code and a screenshot of the page, then writes a test or browser steps. It only counts if it fails on the current code.</span></li>
-      <li><b>Point</b><span>You get the failing check, the real output, and where to look. Optionally, a fix, suggested only after it made that check pass.</span></li>
+      <li><span class="num">1</span><b>Find</b><span>Clones the repo, serves the site or runs its tests, and finds the code the issue talks about. Issue text is treated as data, never as instructions.</span></li>
+      <li><span class="num r">2</span><b>Reproduce</b><span>Gemma 4 reads the issue, the code and a screenshot of the page, then writes a test or browser steps. It only counts if it fails on the current code.</span></li>
+      <li><span class="num g">3</span><b>Point</b><span>You get the failing check, the real output and where to look. Optionally a fix, suggested only after it made that check pass.</span></li>
     </ol>
-    <div class="appcta"><div><b>Use it on your own repos.</b> Install RedGreen as a GitHub app. It answers issues labelled <code>redgreen</code> or a <code>/redgreen</code> comment.</div><button class="btn" id="ctaApp" type="button">Set up RedGreen for GitHub</button></div>
+
+    <div class="appcta">
+      <div><b>Add RedGreen to your repos.</b> Install it as a GitHub app, then label an issue <code>redgreen</code> or comment <code>/redgreen</code>. It replies on the issue, like the one above.</div>
+      <button class="btn primary" id="ctaApp" type="button">Set up RedGreen for GitHub</button>
+    </div>
+    <p class="foot">Open source, Apache-2.0 · <a href="https://github.com/samvit-srivastava/redgreen" target="_blank" rel="noopener">github.com/samvit-srivastava/redgreen</a></p>
   </section>`;
   $('#ctaApp').addEventListener('click', () => botView());
 }

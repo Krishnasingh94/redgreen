@@ -290,17 +290,26 @@ async function botApi(req, res, p) {
   return send(res, 404, { error: 'not found' });
 }
 
-server.on('error', (e) => {
-  if (e.code === 'EADDRINUSE') {
-    console.error(`\nPort ${PORT} is already in use: another RedGreen (or other app) is running.\nClose that terminal, or on Windows run:\n  Get-NetTCPConnection -LocalPort ${PORT} -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }\nor start on another port:  $env:PORT=3001; npm run dev:github\n`);
-    process.exit(1);
-  }
-  throw e;
+let port = PORT, tries = 0;
+server.on('error', async (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  // Is it RedGreen already? Then just point the person at it instead of failing.
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/status`, { signal: AbortSignal.timeout(3000) });
+    const j = await r.json();
+    if (j && j.sandbox) { console.log(`\nRedGreen is already running → http://localhost:${port}\n(Open that link. To restart it, stop the other terminal first.)\n`); process.exit(0); }
+  } catch {}
+  if (++tries > 10) { console.error(`No free port found from ${PORT} to ${port}.`); process.exit(1); }
+  console.log(`Port ${port} is used by another app; trying ${port + 1}…`);
+  port += 1;
+  server.listen(port, '127.0.0.1');
 });
-server.listen(PORT, '127.0.0.1', () => {
+server.on('listening', () => {
   bot.start();
-  console.log(`RedGreen  → http://localhost:${PORT}`);
-  console.log(`Demo shop → http://localhost:${PORT}/shop/`);
+  console.log(`RedGreen  → http://localhost:${port}`);
+  console.log(`Demo shop → http://localhost:${port}/shop/`);
   console.log(`Model     → ${modelConfig.baseUrl} ${modelConfig.model ? '(' + modelConfig.model + ')' : '(auto-detect Gemma)'}`);
   console.log(`Sandbox   → Node ${sandboxInfo.node}, permission model: ${sandboxInfo.permissionModel}`);
+  console.log(`GitHub    → ${REPO_CODE_ALLOWED ? 'GitHub mode on' : 'GitHub mode off (npm run dev:github to enable)'}`);
 });
+server.listen(PORT, '127.0.0.1');
