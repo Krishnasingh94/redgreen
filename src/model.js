@@ -73,9 +73,9 @@ export function extractJson(text) {
   throw new Error('model did not return valid JSON');
 }
 
-export async function chatJson({ system, user, schemaName, schema, images = [] }) {
+export async function chatJson({ system, user, schemaName, schema, images = [], temperature }) {
   const model = await resolveModel();
-  const base = { model, temperature: modelConfig.temperature, max_tokens: modelConfig.maxTokens, messages: [{ role: 'system', content: system }, { role: 'user', content: images.length ? [{ type: 'text', text: user }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))] : user }] };
+  const base = { model, temperature: temperature ?? modelConfig.temperature, max_tokens: modelConfig.maxTokens, messages: [{ role: 'system', content: system }, { role: 'user', content: images.length ? [{ type: 'text', text: user }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))] : user }] };
   const started = Date.now();
   let data;
   try {

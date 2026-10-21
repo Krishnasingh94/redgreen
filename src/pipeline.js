@@ -8,6 +8,17 @@ import { lineDiff } from './diff.js';
 import { buildReport } from './report.js';
 
 const MAX_ATTEMPTS = 3;
+const CART_FNS = ['createCart', 'addItem', 'setQuantity', 'applyCoupon', 'subtotal', 'total'];
+
+// Deterministic facts extracted from the failing test + its output (no AI): call order and the assertion values.
+function testFacts(testCode, output) {
+  const calls = [...testCode.matchAll(new RegExp(`\\b(${CART_FNS.join('|')})\\s*\\(`, 'g'))].map((m) => m[1]);
+  const actual = output.match(/actual:\s*([^\n,]+)/)?.[1]?.trim();
+  const expected = output.match(/expected:\s*([^\n,]+)/)?.[1]?.trim();
+  return { calls, actual, expected };
+}
+// Retries at higher temperature: at low temperature a small model tends to repeat the exact answer we just rejected.
+const retryTemp = (attempt) => [0.2, 0.6, 0.9][attempt - 1] ?? 0.9;
 const SOURCE = 'src/cart.js';
 const EXISTING = 'test/cart.test.js';
 const REPRO = 'test/repro.test.js';
@@ -31,7 +42,7 @@ export async function runPipeline({ report, fixtureDir, emit }) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && !repro; attempt++) {
     step('model.start', { phase: 'reproduce', attempt });
     let ans;
-    try { ans = await chatJson({ ...reproPrompt({ evidence: { description: report.description, env: report.env, events: report.events }, source, existingTests, feedback, hasScreenshot: !!report.screenshot }), schemaName: 'repro', schema: REPRO_SCHEMA, images: report.screenshot ? [report.screenshot] : [] }); }
+    try { ans = await chatJson({ ...reproPrompt({ evidence: { description: report.description, env: report.env, events: report.events }, source, existingTests, feedback, hasScreenshot: !!report.screenshot }), schemaName: 'repro', schema: REPRO_SCHEMA, images: report.screenshot ? [report.screenshot] : [], temperature: retryTemp(attempt) }); }
     catch (e) { step('model.error', { phase: 'reproduce', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
     const { json } = ans;
     json.test_code = normalizeTestCode(json.test_code);
@@ -57,14 +68,21 @@ export async function runPipeline({ report, fixtureDir, emit }) {
   // 2. Fix: model proposes find/replace edits; verified only if repro test AND existing tests pass
   feedback = '';
   let fix = null;
+  const facts = testFacts(repro.test_code, repro.result.output);
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && !fix; attempt++) {
     step('model.start', { phase: 'fix', attempt });
     let ans;
-    try { ans = await chatJson({ ...fixPrompt({ source, testCode: repro.test_code, failure: repro.result.output.slice(-2500), feedback }), schemaName: 'fix', schema: FIX_SCHEMA }); }
+    try { ans = await chatJson({ ...fixPrompt({ source, testCode: repro.test_code, failure: repro.result.output.slice(-2500), feedback, facts }), schemaName: 'fix', schema: FIX_SCHEMA, temperature: retryTemp(attempt) }); }
     catch (e) { step('model.error', { phase: 'fix', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
     let patched;
     try { patched = Array.isArray(ans.json.functions) ? replaceFunctions(source, ans.json.functions) : applyEdits(source, ans.json.edits); }
-    catch (e) { step('fix.rejected', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: ans.json, reason: 'Patch could not be applied: ' + e.message }); feedback = e.message; continue; }
+    catch (e) {
+      step('fix.rejected', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: ans.json, reason: 'Patch could not be applied: ' + e.message });
+      feedback = /changes nothing/.test(e.message)
+        ? `You returned ${(ans.json.functions || []).map((f) => f.name).join(', ') || 'the functions'} UNCHANGED. If you could not find a change to make there, the fix probably belongs in a different function: the test calls, in order, ${facts.calls.join(' → ')}. The value is still correct after some calls and wrong after a later one; change the function where it goes wrong (or the function that computes the final value). Write real code changes.`
+        : e.message;
+      continue;
+    }
     const diff = lineDiff(source, patched);
     ws = createWorkspace(fixtureDir);
     fs.writeFileSync(path.join(ws, SOURCE), patched);
