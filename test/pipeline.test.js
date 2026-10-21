@@ -10,7 +10,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEAK = `import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { createCart, addItem, total } from '../src/cart.js';\ntest('weak', () => { const c = createCart(); addItem(c, { id: 'hp', name: 'H', price: 50 }, 1); assert.equal(total(c), 50); });`;
 const GOOD = `import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { createCart, addItem, setQuantity, applyCoupon, total } from '../src/cart.js';\ntest('discount follows quantity changes', () => { const c = createCart(); addItem(c, { id: 'hp', name: 'H', price: 50 }, 1); setQuantity(c, 'hp', 3); applyCoupon(c, 'SAVE20'); setQuantity(c, 'hp', 1); assert.equal(total(c), 40); });`;
+const WRONG = GOOD.replace('assert.equal(total(c), 40)', 'assert.equal(total(c), 80)');
 const answers = [
+  { hypothesis: 'wrong expectation', evidence_ids: ['e4'], expected: '80', actual: '20', test_name: 'wrong', test_code: WRONG },
   { hypothesis: 'weak', evidence_ids: ['e1'], expected: '50', actual: '50', test_name: 'weak', test_code: WEAK },
   { hypothesis: 'Discount is a fixed amount computed when the coupon is applied, so it goes stale when quantity changes.', evidence_ids: ['e3', 'e4', 'e5'], expected: '$40.00', actual: '$20.00', test_name: 'discount follows quantity changes', test_code: GOOD },
   { root_cause: 'discount cached at apply time', explanation: 'compute from coupon at total time', functions: [
@@ -34,6 +36,7 @@ test('pipeline: rejects non-reproducing test, confirms repro, verifies fix', asy
   const types = run.steps.map((s) => s.type);
   assert.equal(run.steps.find((s) => s.type === 'baseline').result.passed, true);
   assert.ok(types.includes('repro.rejected'), 'weak test must be rejected');
+  assert.ok(run.steps.some((s) => s.type === 'repro.rejected' && /no independent source/.test(s.reason)), 'unsupported expected value must be rejected');
   assert.ok(types.includes('repro.confirmed'));
   assert.equal(run.verdict, 'fixed_verified', JSON.stringify(run.steps.filter((s) => s.reason), null, 1));
   assert.match(run.prMarkdown, /Verified/);

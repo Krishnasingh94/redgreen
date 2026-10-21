@@ -6,8 +6,8 @@ export const modelConfig = {
   model: process.env.GEMMA_MODEL || '', // empty = auto-detect first loaded Gemma model in LM Studio
   apiKey: process.env.GEMMA_API_KEY || 'lm-studio',
   temperature: Number(process.env.GEMMA_TEMPERATURE ?? 0.2),
-  maxTokens: Number(process.env.GEMMA_MAX_TOKENS ?? 6000),
-  timeoutMs: Number(process.env.GEMMA_TIMEOUT_MS ?? 180000),
+  maxTokens: Number(process.env.GEMMA_MAX_TOKENS ?? 3000),
+  timeoutMs: Number(process.env.GEMMA_TIMEOUT_MS ?? 90000),
 };
 
 export function isLocal() {

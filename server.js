@@ -16,7 +16,7 @@ const REPORTS = path.join(DATA, 'reports');
 const RUNS = path.join(DATA, 'runs');
 fs.mkdirSync(REPORTS, { recursive: true }); fs.mkdirSync(RUNS, { recursive: true });
 const PORT = Number(process.env.PORT || 3000);
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.md': 'text/markdown; charset=utf-8' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2', '.diff': 'text/x-diff; charset=utf-8' };
 
 const send = (res, code, body, type = 'application/json') => { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); };
 const safeId = (s) => /^[a-z0-9_]{3,40}$/i.test(s) ? s : null;

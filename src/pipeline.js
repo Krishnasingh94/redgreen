@@ -17,6 +17,14 @@ function testFacts(testCode, output) {
   const expected = output.match(/expected:\s*([^\n,]+)/)?.[1]?.trim();
   return { calls, actual, expected };
 }
+
+// Oracle check (deterministic): numbers that independent sources in the evidence report — failed responses,
+// console errors, crashes. If any exist, the test's expected value must be one of them; a test that "fails"
+// against a made-up expectation proves nothing.
+function evidenceNumbers(report) {
+  const texts = report.events.filter((e) => e.type !== 'action').map((e) => [e.message, e.responseBody, e.error].filter(Boolean).join(' '));
+  return [...new Set(texts.join(' ').match(/-?\d+(?:\.\d+)?/g)?.map(Number).filter((n) => Number.isFinite(n) && n > 0 && n < 1e9) || [])];
+}
 // Retries at higher temperature: at low temperature a small model tends to repeat the exact answer we just rejected.
 const retryTemp = (attempt) => [0.2, 0.6, 0.9][attempt - 1] ?? 0.9;
 const SOURCE = 'src/cart.js';
@@ -36,6 +44,9 @@ export async function runPipeline({ report, fixtureDir, emit }) {
   const baseline = await runTestFile(ws, EXISTING);
   removeWorkspace(ws);
   step('baseline', { result: baseline, note: baseline.passed ? 'Existing tests pass on current code — they do not catch this bug.' : 'Existing tests already fail.' });
+
+  const oracle = evidenceNumbers(report);
+  const oracleOk = (output) => { const e = Number(testFacts('', output).expected); return !Number.isFinite(e) || oracle.includes(e); };
 
   // 1. Reproduce: model writes test; we only accept it if it FAILS on current code with an assertion
   let repro = null, feedback = '';
@@ -58,6 +69,10 @@ export async function runPipeline({ report, fixtureDir, emit }) {
     } else if (!result.assertionFailure) {
       step('repro.rejected', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: json, result, reason: 'Test crashed instead of failing an assertion (syntax/import/runtime error).' });
       feedback = 'Your test crashed instead of failing an assertion. Output:\n' + result.output.slice(-1500);
+    } else if (oracle.length && !oracleOk(result.output)) {
+      const exp = testFacts(json.test_code, result.output).expected;
+      step('repro.rejected', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: json, result, reason: `The test expects ${exp}, but no independent source in the evidence reports that value. Values reported by the server/errors: ${oracle.join(', ')}.` });
+      feedback = `Your test asserts an expected value of ${exp}, which is not supported by the evidence. Independent sources in the evidence (server responses, error messages) report these values: ${oracle.join(', ')}. Use the correct expected value the evidence supports.`;
     } else {
       repro = { ...json, result, model: ans.model, durationMs: ans.durationMs };
       step('repro.confirmed', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: json, result });

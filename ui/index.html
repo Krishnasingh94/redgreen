@@ -1,31 +1,31 @@
 <!doctype html>
 <html lang="en">
 <head>
-<link rel="icon" href="data:,">
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='16' r='8' fill='%23D93A2B'/%3E%3Ccircle cx='22' cy='16' r='8' fill='%230E9F55'/%3E%3C/svg%3E">
 <title>RedGreen</title>
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
-<header class="top">
-  <div class="brand"><span class="dot r"></span><span class="dot g"></span><b>RedGreen</b><span class="sub">bug report → failing test → verified fix</span></div>
-  <div class="pills"><span id="modelPill" class="pill">model: checking…</span><span id="sbxPill" class="pill">sandbox</span></div>
+<header class="bar">
+  <a class="brand" href="/" aria-label="RedGreen home">
+    <span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>
+    <span class="word">RedGreen</span>
+  </a>
+  <div class="status">
+    <span id="modelBadge" class="badge"><i class="dot"></i><span>Checking model</span></span>
+    <span id="sbxBadge" class="badge quiet"><span>Sandbox</span></span>
+  </div>
 </header>
-<div class="layout">
-  <aside>
-    <a class="shoplink" href="/shop/" target="_blank">Open demo shop ↗</a>
-    <h4>Bug reports</h4>
+<div class="shell">
+  <nav class="side" aria-label="Reports and runs">
+    <a class="shop" href="/shop/" target="_blank" rel="noopener">Open the demo shop</a>
+    <h2 class="sideh">Bug reports</h2>
     <ul id="reports" class="list"></ul>
-    <h4>Saved runs</h4>
+    <h2 class="sideh">Past runs</h2>
     <ul id="runs" class="list"></ul>
-  </aside>
-  <main id="main">
-    <div class="empty">
-      <h2>No proof, no fix.</h2>
-      <p>RedGreen turns a user's bug report into a test that <span class="red">fails</span> on your code, then asks local Gemma 4 for a patch, and only calls it fixed when that same test turns <span class="green">green</span> and nothing else breaks.</p>
-      <p class="muted">Pick a bug report on the left, or open the demo shop, reproduce the bug, and click “Report bug”.</p>
-    </div>
-  </main>
+  </nav>
+  <main id="main" tabindex="-1"></main>
 </div>
 <script type="module" src="/ui/app.js"></script>
 </body>

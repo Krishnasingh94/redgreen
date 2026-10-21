@@ -1,130 +1,277 @@
+// RedGreen dashboard. Renders only what the server reports; never invents results.
 const $ = (s, el = document) => el.querySelector(s);
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-const api = (p) => fetch(p).then((r) => r.json());
-let current = null, running = false;
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const getJSON = (p) => fetch(p).then((r) => r.json());
+const secs = (ms) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' s';
+const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+let state = null;          // current view state
+let running = false, tick = null;
+
+/* ---------- tiny JS highlighter (tokenise raw, escape per token) ---------- */
+const KW = /^(import|from|export|function|const|let|var|return|if|else|new|throw|true|false|null|undefined|for|of|await|async)$/;
+function hl(code) {
+  const re = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|('(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_$][\w$]*)(?=\s*\()|([A-Za-z_$][\w$]*)/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(code))) {
+    out += esc(code.slice(last, m.index));
+    const [t, c, s, n, f, w] = m;
+    out += c ? `<span class="c">${esc(c)}</span>` : s ? `<span class="s">${esc(s)}</span>` : n ? `<span class="nm">${n}</span>`
+      : f ? (KW.test(f) ? `<span class="k">${f}</span>` : `<span class="f">${esc(f)}</span>`) : KW.test(w) ? `<span class="k">${w}</span>` : esc(w);
+    last = m.index + t.length;
+  }
+  return out + esc(code.slice(last));
+}
+const codeBlock = (c) => `<pre><code>${hl(String(c ?? '').trim())}</code></pre>`;
+const diffBlock = (d) => `<pre class="diff"><code>${String(d).split('\n').map((l) => {
+  if (l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@')) return `<span class="hd">${esc(l)}</span>`;
+  if (l.startsWith('+')) return `<span class="add">${esc(l)}</span>`;
+  if (l.startsWith('-')) return `<span class="del">${esc(l)}</span>`;
+  return `<span>${esc(l)}</span>`;
+}).join('')}</code></pre>`;
+const assertion = (out = '') => ({ actual: out.match(/actual:\s*([^\n,]+)/)?.[1]?.trim(), expected: out.match(/expected:\s*([^\n,]+)/)?.[1]?.trim() });
+
+/* ---------- status badges ---------- */
 async function loadStatus() {
-  const s = await api('/api/status');
-  const mp = $('#modelPill');
-  if (s.model.ok) { mp.textContent = `${s.model.model} · ${s.model.local ? 'local, offline' : 'remote'}`; mp.className = 'pill ' + (s.model.gemma4 ? 'ok' : ''); }
-  else { mp.textContent = 'model offline: start LM Studio server'; mp.className = 'pill bad'; mp.title = s.model.error; }
-  $('#sbxPill').textContent = `sandbox: node ${s.sandbox.node} · ${s.sandbox.permissionModel.startsWith('--') ? 'fs-isolated' : 'no fs isolation'} · ${s.sandbox.timeoutMs / 1000}s timeout`;
+  try {
+    const s = await getJSON('/api/status');
+    const b = $('#modelBadge');
+    if (s.model.ok) {
+      b.className = 'badge on';
+      b.innerHTML = `<i class="dot"></i><span><strong>${esc(prettyModel(s.model.model))}</strong> ${s.model.local ? 'running on this laptop' : 'on a remote endpoint'}</span>`;
+      b.title = `${s.model.model} at ${s.model.baseUrl}`;
+    } else {
+      b.className = 'badge down';
+      b.innerHTML = `<i class="dot"></i><span>Model offline. Start the LM Studio server.</span>`;
+      b.title = s.model.error;
+    }
+    const iso = s.sandbox.permissionModel.startsWith('--');
+    $('#sbxBadge').innerHTML = `<span>${iso ? 'Tests run sealed: read-only, no processes' : 'Tests run without file isolation'}, ${s.sandbox.timeoutMs / 1000} s limit</span>`;
+    $('#sbxBadge').title = `Node ${s.sandbox.node}, ${s.sandbox.permissionModel}`;
+  } catch { $('#modelBadge').className = 'badge down'; $('#modelBadge').innerHTML = '<i class="dot"></i><span>RedGreen server unreachable</span>'; }
+}
+function prettyModel(id) {
+  const m = id.match(/gemma[-_ ]?(\d+)[-_ ]?([a-z]?\d+[a-z]?)?/i);
+  return m ? `Gemma ${m[1]}${m[2] ? ' ' + m[2].toUpperCase() : ''}` : id;
 }
 
+/* ---------- sidebar ---------- */
+const VERDICT = {
+  fixed_verified: { pip: 'green', text: 'Fix verified' },
+  reproduced_not_fixed: { pip: 'red', text: 'Reproduced, no verified fix' },
+  not_reproduced: { pip: 'amber', text: 'Could not reproduce' },
+};
 async function loadLists() {
-  const [reports, runs] = await Promise.all([api('/api/reports'), api('/api/runs')]);
-  $('#reports').innerHTML = reports.map((r) => `<li data-r="${r.id}" class="${current?.id === r.id ? 'active' : ''}"><div class="t">${esc(r.description)}</div><div class="m">${r.id} · ${r.events} events${r.screenshot ? ' · 🖼' : ''}${r.sample ? ' · <span style="color:var(--amber)">scripted sample</span>' : ''}</div></li>`).join('') || '<li class="m">none yet</li>';
-  $('#runs').innerHTML = runs.map((r) => `<li data-run="${r.id}"><div class="t">${verdictLabel(r.verdict).text}</div><div class="m">${r.id} · ${new Date(r.startedAt).toLocaleTimeString()}</div></li>`).join('') || '<li class="m">none yet</li>';
+  const [reports, runs] = await Promise.all([getJSON('/api/reports'), getJSON('/api/runs')]);
+  $('#reports').innerHTML = reports.length ? reports.map((r) => `<li><button data-report="${esc(r.id)}" aria-current="${state?.report?.id === r.id && !state.savedRun}">
+      <i class="pip ink"></i><span><span class="t">${esc(r.description)}</span><span class="m">${r.sample ? 'Scripted sample' : clock(r.savedAt)}, ${r.events} events${r.screenshot ? ', screenshot' : ''}</span></span></button></li>`).join('')
+    : '<li class="empty">No reports yet. Use the demo shop and press “Report bug”.</li>';
+  $('#runs').innerHTML = runs.length ? runs.slice(0, 12).map((r) => `<li><button data-run="${esc(r.id)}" aria-current="${state?.savedRun === r.id}">
+      <i class="pip ${VERDICT[r.verdict]?.pip || ''}"></i><span><span class="t">${VERDICT[r.verdict]?.text || esc(r.verdict)}</span><span class="m">${clock(r.startedAt)}</span></span></button></li>`).join('')
+    : '<li class="empty">No runs yet.</li>';
 }
 document.addEventListener('click', (e) => {
-  const r = e.target.closest('[data-r]'); if (r && !running) return openReport(r.dataset.r);
-  const run = e.target.closest('[data-run]'); if (run && !running) return openRun(run.dataset.run);
+  if (running) return;
+  const r = e.target.closest('[data-report]'); if (r) return openReport(r.dataset.report);
+  const run = e.target.closest('[data-run]'); if (run) return openRun(run.dataset.run);
 });
 
-function verdictLabel(v) {
-  return ({ fixed_verified: { cls: 'green', big: 'GREEN', text: 'Fix verified: failing test now passes, existing tests still pass' },
-    reproduced_not_fixed: { cls: 'amber', big: 'RED', text: 'Bug reproduced, but no proposed patch passed. Nothing claimed fixed.' },
-    not_reproduced: { cls: 'amber', big: '—', text: 'Could not reproduce from the evidence. No fix proposed.' },
-    running: { cls: 'run', big: '…', text: 'Running' } })[v] || { cls: 'run', big: '?', text: v };
+/* ---------- views ---------- */
+function intro() {
+  $('#main').innerHTML = `<section class="intro">
+    <h1><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
+    <p>RedGreen turns a user's bug report into a test that fails on your code, asks Gemma 4 on this laptop for a patch, and calls it fixed only when that same test passes and nothing else breaks.</p>
+    <ol class="how">
+      <li><b>Capture</b><span>The app records what the user did, what broke, and what the server said. Private values are removed first.</span></li>
+      <li><b>Reproduce</b><span>Gemma writes a test from that evidence. It counts only if it fails on the current code.</span></li>
+      <li><b>Prove</b><span>Gemma patches the code. The same test plus your existing tests must pass, in a sealed sandbox.</span></li>
+    </ol></section>`;
 }
 
-function evidenceHtml(report, cited = []) {
-  return report.events.map((e) => {
-    const bad = e.type !== 'action';
-    let detail = '';
-    if (e.type === 'action') detail = `${esc(e.name)}(${esc(JSON.stringify(e.args).slice(1, -1)).slice(0, 70)})<div class="st">${e.stateAfter?.error ? 'error: ' + esc(e.stateAfter.error) : `subtotal ${e.stateAfter?.subtotal} · discount ${e.stateAfter?.discount} · total <b>${e.stateAfter?.total}</b>`}</div>`;
-    else if (e.type === 'network.failed') detail = `${esc(e.method)} ${esc(new URL(e.url, location.href).pathname)} → <b>${e.status}</b><div class="st">${esc(e.responseBody || e.error || '').slice(0, 160)}</div>`;
-    else detail = esc(e.message);
-    return `<div class="ev ${bad ? 'bad' : ''} ${cited.includes(e.id) ? 'cited' : ''}"><span class="id">${e.id}</span><span class="ty">${esc(e.type.replace('console.', '').replace('network.', 'net.'))}</span><span>${detail}</span></div>`;
-  }).join('');
-}
-
-function shell(report, { sample, savedRun } = {}) {
-  current = report;
+function shell(report, savedRun) {
+  state = { report, savedRun, stages: {}, live: null, steps: [] };
+  const when = report.sample ? 'Scripted sample' : `Reported at ${clock(report.savedAt)}`;
   $('#main').innerHTML = `
-  <div class="head">
-    <div><h2>${esc(report.description)}</h2>
-      <div class="muted">${report.id} · ${report.events.length} events · ${report.redactions} values redacted before storage ${sample ? '<span class="tag sample">scripted sample</span>' : ''} ${savedRun ? `<span class="tag">saved run ${savedRun}</span>` : ''}</div></div>
-    <div>${savedRun ? '' : '<button class="go" id="go">Reproduce & fix with Gemma 4</button>'}</div>
+  <div class="rhead">
+    <div><p class="quote">${esc(report.description)}</p>
+      <p class="rmeta">${when} with ${report.events.length} captured events${report.screenshot ? ' and a screenshot' : ''}. ${report.redactions} private ${report.redactions === 1 ? 'value' : 'values'} removed before saving.${savedRun ? ` Showing a saved run from ${clock(savedRun.startedAt)}.` : ''}</p></div>
+    ${savedRun ? `<button class="go" id="go" data-again="1">Run again</button>` : `<button class="go" id="go"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>Reproduce and fix</button>`}
   </div>
-  <div id="verdict"></div>
-  <div class="rail" id="rail"><span data-k="evidence">1 evidence</span><span data-k="baseline">2 baseline</span><span data-k="red">3 repro → RED</span><span data-k="patch">4 patch</span><span data-k="green">5 verify → GREEN</span><span data-k="pr">6 PR</span></div>
-  <div class="grid">
-    <div><div class="card"><h3>Captured evidence <span class="tag">redacted</span></h3><div id="evidence">${evidenceHtml(report)}</div>${report.screenshot ? `<div class="shot"><div class="meta">screenshot (read by Gemma 4 vision)</div><img src="${report.screenshot}" alt="User screenshot"></div>` : ''}</div>
-      <div class="card" id="hypCard" hidden><h3>Gemma's hypothesis</h3><div id="hyp"></div></div></div>
-    <div><div class="card"><h3>Run log <span class="tag">every claim backed by a real test run</span></h3><div id="log"><p class="muted">Not run yet.</p></div></div>
-      <div class="card" id="prCard" hidden><h3>PR description <span><button id="copy">Copy</button> <a id="dl" class="tag" download>.md</a></span></h3><pre id="pr"></pre></div></div>
+  <div id="notice"></div>
+  <section class="proof" id="proof" aria-live="polite">
+    <div class="side-p" id="pRed"><div class="lamp"></div><div class="cap">On the code as it is</div><div class="verdictword">Waiting</div><div class="fact">Gemma's test must fail here.</div></div>
+    <div class="wire" aria-hidden="true"><svg viewBox="0 0 64 24"><path d="M2 12 H54 M46 4 L56 12 L46 20"/></svg></div>
+    <div class="side-p" id="pGreen"><div class="lamp"></div><div class="cap">After Gemma's patch</div><div class="verdictword">Waiting</div><div class="fact">The same test must pass here.</div></div>
+  </section>
+  <ol class="track" id="track">
+    ${['Evidence', 'Existing tests', 'Reproduce', 'Patch', 'Verify'].map((l, i) => `<li data-k="${i}"><span class="n">${i + 1}</span><span class="lbl">${l}</span><span class="tm">&nbsp;</span></li>`).join('')}
+  </ol>
+  <div class="cols">
+    <div>
+      <section class="sect"><h3>What the user did <small>captured, private values removed</small></h3><ol class="tl" id="tl">${timeline(report)}</ol>
+        ${report.screenshot ? `<div class="body shot"><p>Screenshot the user attached. Gemma 4 reads it.</p><img src="${report.screenshot}" alt="Screenshot attached to the bug report"></div>` : ''}</section>
+      <section class="sect" id="hypSect" hidden><h3>Gemma's diagnosis</h3><div class="body hyp" id="hyp"></div></section>
+    </div>
+    <div>
+      <section class="sect" id="outSect" hidden><h3 id="outTitle">Verified fix</h3><div class="body out" id="out"></div></section>
+      <section class="sect"><h3>What Gemma tried <small>every result below is a real test run</small></h3><ol class="att" id="att"><li><i class="mk"></i><div><h4>Not started</h4><p class="sub">Press “Reproduce and fix” to begin.</p></div></li></ol></section>
+    </div>
   </div>`;
-  $('#go')?.addEventListener('click', () => analyze(report.id));
+  $('#go').addEventListener('click', () => analyze(report.id));
   loadLists();
 }
 
-const rail = (k, cls = 'on') => { const el = $(`#rail [data-k="${k}"]`); if (el) el.className = cls; };
-function resultBadge(r) { return `<span class="result ${r.passed ? 'pass' : 'fail'}">${r.passed ? 'PASS' : 'FAIL'}</span><span class="meta">${esc(r.file)} · ${r.pass} passed / ${r.fail} failed · exit ${r.exitCode} · ${r.durationMs}ms</span>`; }
-const out = (r, open) => `<details ${open ? 'open' : ''}><summary>test output</summary><pre>${esc(r.output.trim())}</pre></details>`;
-const codeBlock = (c) => `<pre>${esc(c)}</pre>`;
-const diffBlock = (d) => `<pre>${d.split('\n').map((l) => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'add' : l.startsWith('-') && !l.startsWith('---') ? 'del' : ''}">${esc(l) || ' '}</span>`).join('\n')}</pre>`;
+function timeline(report, cited = []) {
+  return report.events.map((e) => {
+    const bad = e.type !== 'action';
+    let what = '';
+    if (e.type === 'action') {
+      const args = (e.args || []).map((a) => typeof a === 'object' ? (a.name || a.id || '{…}') : JSON.stringify(a)).join(', ');
+      const st = e.stateAfter || {};
+      what = `<code>${esc(e.name)}(${esc(args)})</code><div class="st">${st.error ? 'Error: ' + esc(st.error) : `Total after: <b>$${Number(st.total).toFixed(2)}</b>${st.discount ? `, discount $${Number(st.discount).toFixed(2)}` : ''}`}</div>`;
+    } else if (e.type === 'network.failed') {
+      let msg = e.responseBody || e.error || ''; try { msg = JSON.parse(msg).error || msg; } catch {}
+      what = `Request failed: <code>${esc(e.method)} ${esc(new URL(e.url, location.href).pathname)}</code> returned ${e.status}<div class="st">${esc(msg).slice(0, 180)}</div>`;
+    } else what = `${e.type === 'uncaught' ? 'Crash' : 'Console error'}: ${esc(e.message)}`;
+    const c = cited.includes(e.id);
+    return `<li class="${bad ? 'bad' : ''} ${c ? 'cited' : ''}"><span class="at">${(e.t_ms / 1000).toFixed(1)}s</span><i class="nd"></i><div class="what">${what}${c ? '<span class="cite">cited by Gemma</span>' : ''}</div></li>`;
+  }).join('');
+}
 
-function renderStep(s) {
-  const log = $('#log'); if (log.querySelector('.muted')) log.innerHTML = '';
-  $('.step.live', log)?.remove();
-  const meta = s.model ? `<div class="meta">${esc(s.model)} · ${(s.durationMs / 1000).toFixed(1)}s · attempt ${s.attempt}</div>` : '';
-  let h = '';
+/* ---------- proof bar + track ---------- */
+function setPanel(id, cls, word, fact, ignite) {
+  const p = $(id); if (!p) return;
+  p.className = 'side-p ' + cls + (ignite ? ' ignite' : '');
+  $('.verdictword', p).textContent = word;
+  $('.fact', p).innerHTML = fact;
+  $('#proof').classList.toggle('has-red', $('#pRed').classList.contains('red'));
+  $('#proof').classList.toggle('has-green', $('#pGreen').classList.contains('green'));
+}
+function stage(k, cls, tm) {
+  const li = $(`#track [data-k="${k}"]`); if (!li) return;
+  li.className = cls;
+  if (tm !== undefined) $('.tm', li).textContent = tm;
+}
+function addTime(k, ms) { state.stages[k] = (state.stages[k] || 0) + ms; stage(k, $(`#track [data-k="${k}"]`).className, secs(state.stages[k])); }
+
+/* ---------- step rendering ---------- */
+function attempt(html) { const att = $('#att'); if (att.dataset.started !== '1') { att.innerHTML = ''; att.dataset.started = '1'; } $('#liveAtt')?.remove(); att.insertAdjacentHTML('beforeend', html); }
+const chip = (r) => `<span class="chip ${r.passed ? 'pass' : 'fail'}"><b>${r.passed ? 'PASS' : 'FAIL'}</b>${esc(r.file.replace('test/', ''))}, ${r.pass} passed, ${r.fail} failed</span>`;
+const outBlock = (r, label = 'Test output') => `<details><summary>${label}</summary><pre>${esc(r.output.trim())}</pre></details>`;
+
+function render(s, live) {
   switch (s.type) {
-    case 'evidence': rail('evidence', 'green'); h = `<div class="step ok"><div class="ttl">Evidence loaded</div><div class="meta">${s.events} events${s.screenshot ? ' + screenshot' : ''} · ${s.redactions} redactions applied before storage</div></div>`; break;
-    case 'baseline': rail('baseline', 'on'); h = `<div class="step ${s.result.passed ? 'warn' : 'fail'}"><div class="ttl">Existing test suite on current code</div>${resultBadge(s.result)}<div class="why">${esc(s.note)}</div>${out(s.result)}</div>`; break;
-    case 'model.start': h = `<div class="step live"><div class="ttl">Gemma 4 is ${s.phase === 'reproduce' ? 'writing a reproduction test' : 'proposing a minimal patch'}…</div><div class="meta">attempt ${s.attempt} · running locally</div></div>`; break;
-    case 'model.error': h = `<div class="step fail"><div class="ttl">Model error</div><div class="why">${esc(s.error)}</div></div>`; break;
-    case 'repro.rejected': h = `<div class="step warn"><div class="ttl">Reproduction attempt rejected</div>${meta}<div class="why">${esc(s.reason)}</div>${s.result ? resultBadge(s.result) : ''}<details><summary>proposed test</summary>${codeBlock(s.proposal.test_code)}</details></div>`; break;
-    case 'repro.confirmed':
-      rail('red', 'red');
-      h = `<div class="step fail"><div class="ttl">Bug reproduced: the test FAILS on current code</div>${meta}${resultBadge(s.result)}<details open><summary>test/repro.test.js (written by Gemma)</summary>${codeBlock(s.proposal.test_code)}</details>${out(s.result)}</div>`;
-      $('#hypCard').hidden = false;
-      $('#hyp').innerHTML = `<p class="hyp">${esc(s.proposal.hypothesis)}</p><div class="ee"><b>expected</b><span class="green">${esc(s.proposal.expected)}</span><b>actual</b><span class="red">${esc(s.proposal.actual)}</span><b>cites</b><span>${s.proposal.evidence_ids.map(esc).join(', ')}</span></div>`;
-      $('#evidence').innerHTML = evidenceHtml(current, s.proposal.evidence_ids);
+    case 'evidence': stage(0, 'done', 'ready'); break;
+    case 'baseline':
+      stage(1, s.result.passed ? 'done' : 'red', secs(s.result.durationMs));
+      attempt(`<li><i class="mk ${s.result.passed ? 'info' : 'fail'}"></i><div><h4>${s.result.passed ? `Your ${s.result.pass} existing tests pass` : 'Your existing tests already fail'}</h4>
+        <p class="sub">${s.result.passed ? 'So they do not catch this bug.' : 'Fix those first; results below may be unreliable.'}</p><div class="res">${chip(s.result)}</div>${outBlock(s.result)}</div></li>`);
       break;
-    case 'fix.rejected': h = `<div class="step warn"><div class="ttl">Patch rejected</div>${meta}<div class="why">${esc(s.reason)}</div>${s.diff ? `<details><summary>proposed diff</summary>${diffBlock(s.diff)}</details>` : ''}${(s.results || []).map((r) => resultBadge(r) + '<br>').join('')}</div>`; break;
-    case 'fix.verified':
-      rail('patch', 'green'); rail('green', 'green');
-      h = `<div class="step ok"><div class="ttl">Patch verified: same test now PASSES, nothing else broke</div>${meta}<div class="why">${esc(s.proposal.root_cause)}</div>${diffBlock(s.diff)}${s.results.map((r) => `<div>${resultBadge(r)}</div>`).join('')}${out(s.results[0])}</div>`; break;
-    case 'fatal': h = `<div class="step fail"><div class="ttl">Run failed</div><div class="why">${esc(s.error)}</div></div>`; break;
+    case 'model.start': {
+      const k = s.phase === 'reproduce' ? 2 : 3;
+      stage(k, 'now');
+      if (s.phase === 'reproduce') setPanel('#pRed', 'busy', 'Writing', `Gemma is writing a test from the evidence. <span id="tick">0 s</span>`);
+      else setPanel('#pGreen', 'busy', 'Patching', `Gemma is rewriting the code. <span id="tick">0 s</span>`);
+      if (live) {
+        const t0 = Date.now(); clearInterval(tick);
+        tick = setInterval(() => { const el = $('#tick'); if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + ' s'; }, 250);
+        attempt(`<li id="liveAtt"><i class="mk live"></i><div><h4>${s.phase === 'reproduce' ? 'Writing a reproduction test' : 'Proposing a patch'}</h4><p class="sub">Attempt ${s.attempt} of 3, on this laptop</p></div></li>`);
+      }
+      break; }
+    case 'model.error':
+      clearInterval(tick);
+      attempt(`<li><i class="mk fail"></i><div><h4>Model error</h4><p class="why">${esc(s.error)}</p></div></li>`);
+      break;
+    case 'repro.rejected':
+      clearInterval(tick); addTime(2, s.durationMs || 0);
+      attempt(`<li><i class="mk warn"></i><div><h4>Test rejected</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs || 0)}</p><p class="why">${esc(s.reason)}</p>${s.result ? `<div class="res">${chip(s.result)}</div>` : ''}<details><summary>Gemma's test</summary>${codeBlock(s.proposal?.test_code)}</details></div></li>`);
+      break;
+    case 'repro.confirmed': {
+      clearInterval(tick); addTime(2, s.durationMs || 0); stage(2, 'red');
+      const a = assertion(s.result.output);
+      setPanel('#pRed', 'red', 'Fails', a.expected ? `Expected <b>${esc(money(a.expected))}</b>, got <b>${esc(money(a.actual))}</b>. Bug reproduced.` : 'Bug reproduced by a failing test.', live);
+      attempt(`<li><i class="mk fail"></i><div><h4>Bug reproduced: the test fails on your code</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${chip(s.result)}</div>
+        <details open><summary>test/repro.test.js, written by Gemma</summary>${codeBlock(s.proposal.test_code)}</details>${outBlock(s.result, 'Failure output')}</div></li>`);
+      $('#hypSect').hidden = false;
+      $('#hyp').innerHTML = `<p>${esc(s.proposal.hypothesis)}</p><dl class="ev"><dt>Expected</dt><dd class="exp">${esc(s.proposal.expected)}</dd><dt>Actual</dt><dd class="act">${esc(s.proposal.actual)}</dd><dt>Evidence</dt><dd>${(s.proposal.evidence_ids || []).map(esc).join(', ') || 'none cited'}</dd></dl>`;
+      $('#tl').innerHTML = timeline(state.report, s.proposal.evidence_ids || []);
+      break; }
+    case 'fix.rejected':
+      clearInterval(tick); addTime(3, s.durationMs || 0);
+      for (const r of s.results || []) addTime(4, r.durationMs);
+      attempt(`<li><i class="mk warn"></i><div><h4>Patch rejected</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs || 0)}</p><p class="why">${esc(s.reason)}</p>${(s.results || []).length ? `<div class="res">${s.results.map(chip).join('')}</div>` : ''}${s.diff ? `<details><summary>Rejected change</summary>${diffBlock(s.diff)}</details>` : ''}</div></li>`);
+      break;
+    case 'fix.verified': {
+      clearInterval(tick); addTime(3, s.durationMs || 0); stage(3, 'done');
+      for (const r of s.results) addTime(4, r.durationMs);
+      stage(4, 'green');
+      const existing = s.results[1];
+      setPanel('#pGreen', 'green', 'Passes', `Same test passes. All ${existing.pass} existing tests still pass.`, live);
+      attempt(`<li><i class="mk ok"></i><div><h4>Patch verified</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${s.results.map(chip).join('')}</div>${outBlock(s.results[0], 'Passing output')}</div></li>`);
+      state.verified = s;
+      break; }
+    case 'fatal':
+      clearInterval(tick);
+      $('#notice').innerHTML = `<div class="notice err">The run stopped: ${esc(s.error)}</div>`;
+      break;
   }
-  log.insertAdjacentHTML('beforeend', h);
+}
+const money = (v) => /^-?\d+(\.\d+)?$/.test(v) ? '$' + Number(v).toFixed(2) : v;
+
+function finish(verdict, runId) {
+  clearInterval(tick);
+  if (verdict === 'not_reproduced') {
+    stage(2, 'red');
+    setPanel('#pRed', 'amber', 'Unproven', 'No test failed for the reported reason. Nothing was changed.');
+    setPanel('#pGreen', '', 'Skipped', 'No patch without a failing test.');
+  } else if (verdict === 'reproduced_not_fixed') {
+    setPanel('#pGreen', 'amber', 'No fix', 'No patch passed. Your code is unchanged.');
+  }
+  if (runId) showOutcome(runId, verdict);
+  loadLists();
 }
 
-function renderVerdict(v) {
-  const l = verdictLabel(v);
-  $('#verdict').innerHTML = `<div class="verdict ${l.cls}"><span class="big">${l.big}</span><span>${esc(l.text)}</span></div>`;
-}
-
-async function showPr(runId) {
+async function showOutcome(runId, verdict) {
   const md = await fetch(`/api/runs/${runId}/pr.md`).then((r) => r.text());
-  $('#prCard').hidden = false; $('#pr').textContent = md; rail('pr', 'green');
-  $('#dl').href = `/api/runs/${runId}/pr.md`; $('#dl').setAttribute('download', `redgreen-${runId}.md`);
-  $('#copy').onclick = () => navigator.clipboard.writeText(md).then(() => ($('#copy').textContent = 'Copied'));
+  const v = state.verified;
+  const sect = $('#outSect'); sect.hidden = false;
+  $('#outTitle').textContent = v ? 'Verified fix' : 'Report for the maintainer';
+  const patch = v ? `${v.diff}\n` : '';
+  $('#out').innerHTML = `
+    ${v ? `<p class="change"><b>What changed:</b> ${esc(v.proposal.change || v.proposal.root_cause)}</p>${diffBlock(v.diff)}` : '<p>The bug is reproduced by a failing test, but no patch was verified. The report below includes the test so a person can take it from here.</p>'}
+    <div class="actions" style="margin-top:12px">
+      <button class="btn" id="copyPr">Copy PR description</button>
+      <a class="btn" href="/api/runs/${esc(runId)}/pr.md" download="redgreen-${esc(runId)}.md">Download report</a>
+      ${v ? `<a class="btn" id="dlPatch" download="redgreen-${esc(runId)}.diff">Download patch</a>` : ''}
+    </div>
+    <details><summary>Preview PR description</summary><pre>${esc(md)}</pre></details>`;
+  $('#copyPr').onclick = () => navigator.clipboard.writeText(md).then(() => { $('#copyPr').textContent = 'Copied'; });
+  if (v) $('#dlPatch').href = URL.createObjectURL(new Blob([patch], { type: 'text/x-diff' }));
 }
 
-async function openReport(id) { const r = await api('/api/reports/' + id); shell(r, { sample: r.sample }); }
-
+/* ---------- actions ---------- */
+async function openReport(id) { const r = await getJSON('/api/reports/' + encodeURIComponent(id)); shell(r, null); }
 async function openRun(id) {
-  const run = await api('/api/runs/' + id);
-  const report = await api('/api/reports/' + run.reportId);
-  shell(report, { sample: report.sample, savedRun: new Date(run.startedAt).toLocaleString() });
-  run.steps.filter((s) => s.type !== 'model.start').forEach(renderStep);
-  renderVerdict(run.verdict);
-  if (run.prMarkdown) showPr(run.id);
+  const run = await getJSON('/api/runs/' + encodeURIComponent(id));
+  const report = await getJSON('/api/reports/' + encodeURIComponent(run.reportId));
+  shell(report, { id: run.id, startedAt: run.startedAt });
+  state.savedRun = run.id;
+  for (const s of run.steps) render(s, false);
+  finish(run.verdict, run.id);
 }
-
 function analyze(id) {
-  running = true; $('#go').disabled = true; $('#go').textContent = 'Running…';
-  renderVerdict('running');
-  const es = new EventSource('/api/analyze/' + id);
+  if (running) return;
+  shell(state.report, null); // fresh view: clears timers, panels and attempts from any previous run
+  running = true;
+  const go = $('#go'); go.disabled = true; go.lastChild.textContent = 'Working';
+  const es = new EventSource('/api/analyze/' + encodeURIComponent(id));
   es.onmessage = (m) => {
     const s = JSON.parse(m.data);
-    if (s.type === 'done') { es.close(); running = false; renderVerdict(s.verdict); $('#go').disabled = false; $('#go').textContent = 'Run again'; loadLists(); if (s.verdict !== 'not_reproduced') showPr(s.runId); return; }
-    renderStep(s);
+    if (s.type === 'done') { es.close(); running = false; go.disabled = false; go.lastChild.textContent = 'Run again'; finish(s.verdict, s.runId); return; }
+    render(s, true);
   };
-  es.onerror = () => { es.close(); running = false; $('#go').disabled = false; $('#go').textContent = 'Retry'; };
+  es.onerror = () => { es.close(); running = false; clearInterval(tick); go.disabled = false; go.lastChild.textContent = 'Try again';
+    $('#notice').innerHTML = '<div class="notice err">Lost the connection to the RedGreen server. Check the terminal running it, then try again.</div>'; };
 }
 
-loadStatus(); loadLists(); setInterval(loadStatus, 15000);
+intro(); loadStatus(); loadLists(); setInterval(loadStatus, 15000);
