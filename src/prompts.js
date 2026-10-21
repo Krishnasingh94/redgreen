@@ -14,10 +14,10 @@ export const REPRO_SCHEMA = {
 
 export const FIX_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['root_cause', 'edits', 'explanation'],
+  required: ['root_cause', 'functions', 'explanation'],
   properties: {
     root_cause: { type: 'string' },
-    edits: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['find', 'replace'], properties: { find: { type: 'string' }, replace: { type: 'string' } } } },
+    functions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['name', 'code'], properties: { name: { type: 'string' }, code: { type: 'string' } } } },
     explanation: { type: 'string' },
   },
 };
@@ -56,11 +56,13 @@ ${feedback ? `\nYOUR PREVIOUS ATTEMPT WAS REJECTED:\n${feedback}\nFix the proble
 export function fixPrompt({ source, testCode, failure, feedback }) {
   return {
     system: `You are a careful engineer making the smallest correct fix.
-You get a source file and a test that reproduces a bug (it currently fails). Propose a minimal patch to src/cart.js ONLY, as exact find/replace edits.
+You get a source file and a test that reproduces a bug (it currently fails). Fix src/cart.js by rewriting the functions that need to change.
 Rules:
-- Each "find" must be copied EXACTLY from the source (including whitespace) and must appear exactly once.
-- Keep the public API the same so the existing tests still pass. Do not edit or weaken the test.
-- Prefer fixing the root cause over special-casing the test's numbers.
+- Return each changed function COMPLETE, from "export function name(" to its closing "}". Change as few functions as possible (usually 1 or 2).
+- Only rewrite functions that already exist. Do not add new top-level code, imports, or helpers outside functions.
+- Keep every function's name and parameters the same so the existing tests still pass. Do not edit or weaken the test.
+- First explain the root cause in one or two sentences, then fix the root cause instead of special-casing the test's numbers.
+- Make sure every scenario in the test produces the expected value, including the order of calls in the test.
 Return only JSON matching the schema.`,
     user: `SOURCE FILE src/cart.js:
 \`\`\`js

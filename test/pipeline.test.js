@@ -13,9 +13,8 @@ const GOOD = `import { test } from 'node:test';\nimport assert from 'node:assert
 const answers = [
   { hypothesis: 'weak', evidence_ids: ['e1'], expected: '50', actual: '50', test_name: 'weak', test_code: WEAK },
   { hypothesis: 'Discount is a fixed amount computed when the coupon is applied, so it goes stale when quantity changes.', evidence_ids: ['e3', 'e4', 'e5'], expected: '$40.00', actual: '$20.00', test_name: 'discount follows quantity changes', test_code: GOOD },
-  { root_cause: 'discount cached at apply time', explanation: 'compute from coupon at total time', edits: [
-    { find: '  cart.discount = round2(subtotal(cart) * pct);\n', replace: '' },
-    { find: '  return round2(Math.max(0, subtotal(cart) - cart.discount));', replace: '  const pct = cart.coupon ? COUPONS[cart.coupon] : 0;\n  cart.discount = round2(subtotal(cart) * pct);\n  return round2(Math.max(0, subtotal(cart) - cart.discount));' },
+  { root_cause: 'discount cached at apply time', explanation: 'compute from coupon at total time', functions: [
+    { name: 'total', code: 'export function total(cart) {\n  const pct = cart.coupon ? COUPONS[cart.coupon] : 0;\n  cart.discount = round2(subtotal(cart) * pct);\n  return round2(Math.max(0, subtotal(cart) - cart.discount));\n}' },
   ] },
 ];
 
