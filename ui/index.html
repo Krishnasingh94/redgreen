@@ -2,38 +2,41 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='16' r='8' fill='%23D93A2B'/%3E%3Ccircle cx='22' cy='16' r='8' fill='%230E9F55'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='16' r='8' fill='%23FF5B4B'/%3E%3Ccircle cx='22' cy='16' r='8' fill='%232FD67C'/%3E%3C/svg%3E">
 <title>RedGreen</title>
 <link rel="stylesheet" href="/ui/style.css">
+<link rel="stylesheet" href="/ui/v2.css">
 </head>
 <body>
-<header class="bar">
-  <a class="brand" href="/" aria-label="RedGreen home">
+<div id="splash" aria-hidden="true">
+  <div class="sp-device">
+    <div class="sp-lamps"><i class="sp-l r"></i><i class="sp-l g"></i></div>
+    <div class="sp-word">RedGreen</div>
+    <div class="sp-line"><span></span></div>
+    <div class="sp-msg" id="spMsg">Warming up Gemma 4</div>
+  </div>
+</div>
+<header class="top2">
+  <a class="brand" href="#/" aria-label="RedGreen overview">
     <span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>
     <span class="word">RedGreen</span>
   </a>
-  <div class="status">
-    <span id="modelBadge" class="badge"><i class="dot"></i><span>Checking model</span></span>
-    <span id="botBadge" class="badge quiet" hidden></span>
-    <span id="sbxBadge" class="badge quiet"><span>Sandbox</span></span>
+  <nav class="tabs" aria-label="Main">
+    <a href="#/" data-tab="home">Overview</a>
+    <a href="#/reproduce" data-tab="reproduce">Reproduce</a>
+    <a href="#/github" data-tab="github">GitHub App</a>
+    <a href="#/history" data-tab="history">History</a>
+  </nav>
+  <div class="sys-wrap">
+    <button id="sysBtn" class="sys" type="button" aria-expanded="false"><i class="dot"></i><span id="sysTxt">Checking</span></button>
+    <div id="sysPop" class="sys-pop" hidden>
+      <span id="modelBadge" class="badge"><i class="dot"></i><span>Checking model</span></span>
+      <span id="botBadge" class="badge quiet" hidden></span>
+      <span id="sbxBadge" class="badge quiet"><span>Sandbox</span></span>
+    </div>
   </div>
 </header>
-<div class="shell">
-  <nav class="side" aria-label="Reports and runs">
-    <form class="ghform" id="ghSide">
-      <label for="ghUrlSide">Reproduce an issue</label>
-      <div class="ghrow"><input id="ghUrlSide" type="url" placeholder="https://github.com/owner/repo/issues/1" required><button type="submit">Load</button></div>
-      <p class="gherr" role="alert"></p>
-    </form>
-    <button class="shop botlink" id="botLink" type="button"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>RedGreen for GitHub</button>
-    <h2 class="sideh">Issues and reports</h2>
-    <ul id="reports" class="list"></ul>
-    <h2 class="sideh">Past runs</h2>
-    <ul id="runs" class="list"></ul>
-    <a class="quietlink" href="/shop/" target="_blank" rel="noopener">Open the demo shop (instrumented app)</a>
-  </nav>
-  <main id="main" tabindex="-1"></main>
-</div>
+<main id="main" tabindex="-1"></main>
 <script type="module" src="/ui/app.js"></script>
 </body>
 </html>

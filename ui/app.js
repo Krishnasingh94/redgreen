@@ -6,7 +6,8 @@ const secs = (ms) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' s';
 const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 let state = null;          // current view state
-let tryFixSetting = false; // reproduce-only unless switched on in the Bot page
+let tryFixSetting = false;
+let lastStatus = null; // reproduce-only unless switched on in the Bot page
 let running = false, tick = null;
 
 /* ---------- tiny JS highlighter (tokenise raw, escape per token) ---------- */
@@ -60,7 +61,13 @@ async function loadStatus() {
       bb.innerHTML = s.bot.current ? `<i class="dot"></i><span>Bot working on <strong>${esc(s.bot.current.repo)}#${s.bot.current.number}</strong></span>` : `<i class="dot"></i><span>${s.bot.kind === 'app' ? `GitHub App live on ${s.bot.repos.length} ${s.bot.repos.length === 1 ? 'repo' : 'repos'}` : `Bot watching ${s.bot.repos.map(esc).join(', ')}`}</span>`;
       bb.title = `Label an issue "${s.bot.label}" or comment /redgreen`;
     } else bb.hidden = true;
-  } catch { $('#modelBadge').className = 'badge down'; $('#modelBadge').innerHTML = '<i class="dot"></i><span>RedGreen server unreachable</span>'; }
+    lastStatus = s;
+    const sys = $('#sysBtn');
+    sys.className = 'sys ' + (s.model.ok ? 'on' : s.model.checking ? '' : 'down');
+    $('#sysTxt').textContent = s.model.ok ? `${prettyModel(s.model.model)} · ${s.model.local ? 'local' : 'remote'}` : s.model.checking ? 'Checking model' : 'Model offline';
+    statusReady();
+  } catch {
+    $('#sysBtn').className = 'sys down'; $('#sysTxt').textContent = 'Server unreachable'; statusReady(); $('#modelBadge').className = 'badge down'; $('#modelBadge').innerHTML = '<i class="dot"></i><span>RedGreen server unreachable</span>'; }
 }
 function prettyModel(id) {
   const m = id.match(/gemma[-_ ]?(\d+)[-_ ]?([a-z]?\d+[a-z]?)?/i);
@@ -75,7 +82,13 @@ const VERDICT = {
   not_reproduced: { pip: 'amber', text: 'Could not reproduce' },
 };
 async function loadLists() {
+  if (!$('#reports') && !$('#recent')) return;
   const [reports, runs] = await Promise.all([getJSON('/api/reports'), getJSON('/api/runs')]);
+  if ($('#recent')) {
+    const gh = reports.filter((r) => r.kind === 'github').slice(0, 6);
+    $('#recent').innerHTML = gh.length ? gh.map((r, i) => `<button class="icard" data-report="${esc(r.id)}" style="--i:${i}"><span class="irepo">${esc(r.repo)}</span><span class="ititle">${esc(r.description)}</span><span class="iwhen">Loaded ${clock(r.savedAt)}</span></button>`).join('') : '<p class="muted">Issues you reproduce will show up here.</p>';
+  }
+  if (!$('#reports')) return;
   $('#reports').innerHTML = reports.length ? reports.map((r) => `<li><button data-report="${esc(r.id)}" aria-current="${state?.report?.id === r.id && !state.savedRun}">
       <i class="pip ${r.kind === 'github' ? 'gh' : 'ink'}"></i><span><span class="t">${esc(r.description)}</span><span class="m">${r.kind === 'github' ? esc(r.repo) : `${r.sample ? 'Scripted sample' : clock(r.savedAt)}, ${r.events} events${r.screenshot ? ', screenshot' : ''}`}</span></span></button></li>`).join('')
     : '<li class="empty">No reports yet. Use the demo shop and press “Report bug”.</li>';
@@ -106,49 +119,75 @@ async function loadIssue(form) {
 document.addEventListener('submit', (e) => { const f = e.target.closest('.ghform'); if (f) { e.preventDefault(); if (!running) loadIssue(f); } });
 
 /* ---------- views ---------- */
-function intro() {
-  $('#main').innerHTML = `<section class="home">
-    <div class="hero">
-      <div class="hero-copy">
+function setTab(name) { document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name)); }
+
+function home() {
+  setTab('home');
+  $('#main').innerHTML = `<section class="pg home2">
+    <div class="hero2">
+      <div class="h-copy">
+        <p class="kicker"><span class="lamps sm"><i class="l r"></i><i class="l g"></i></span>Bug reproduction for GitHub, powered by Gemma 4</p>
         <h1><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
-        <p class="sub1">“It's broken” isn't a bug report. RedGreen turns a GitHub issue into a <b>check that fails on your code</b>, then shows where to look. Gemma 4 runs on this laptop, and every claim comes from a real run.</p>
-        <form class="ghform big" id="ghIntro">
-          <label for="ghUrlIntro">Paste a GitHub issue from a website or JavaScript project</label>
-          <div class="ghrow"><input id="ghUrlIntro" type="url" placeholder="https://github.com/owner/repo/issues/1" required><button type="submit">Reproduce it</button></div>
-          <p class="gherr" role="alert"></p>
-        </form>
-        <div class="chips"><span>Gemma 4 E4B, offline</span><span>Runs on a 6 GB laptop GPU</span><span>Never edits your code by default</span></div>
+        <p class="lede">Issues say “it's broken.” RedGreen answers with a check that fails on your code, and shows where to look.</p>
+        <div class="ctas"><a class="cta-main" href="#/reproduce">Reproduce an issue</a><a class="cta-alt" href="#/github">Add to GitHub</a></div>
       </div>
-      <figure class="replay" aria-label="A real exchange on GitHub: an issue, then RedGreen's reply">
-        <div class="gh-card issue-card">
-          <div class="gh-head"><span class="state">Open</span><b>Cart total is wrong after changing quantity with a coupon applied</b></div>
-          <p>Add Headphones, set quantity to 3, apply SAVE20, then set quantity back to 1.<br>Expected <b>$40.00</b>. Actual: the total shows <b>$20.00</b>.</p>
-          <div class="cmt"><span class="who">samvit-srivastava</span> commented <code>/redgreen</code></div>
-        </div>
-        <div class="gh-card bot-card">
-          <div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div>
-          <h3><i class="dotred"></i>Reproduced</h3>
-          <p class="small">This browser check <b>fails</b> on the current code:</p>
-          <pre class="mini"><span class="ok">✓ 1. click "button.add[data-id=hp]"</span><span class="ok">✓ 2. fill "Quantity of Headphones" "3"</span><span class="ok">✓ 3. fill "#coupon" "SAVE20"</span><span class="ok">✓ 4. click "#apply"</span><span class="ok">✓ 5. fill "Quantity of Headphones" "1"</span><span class="bad">✗ 6. expect "#total" to show "$40.00"</span><span class="bad">     actual: "$20.00"</span></pre>
-          <p class="small where">🔍 Where to look: <code>app.js</code>, <code>setQuantity()</code></p>
-        </div>
-        <figcaption>A real reply RedGreen posted on <a href="https://github.com/samvit-srivastava/tiny-shop/issues/1" target="_blank" rel="noopener">tiny-shop#1</a></figcaption>
-      </figure>
+      ${replayCard()}
     </div>
-
-    <ol class="how">
-      <li><span class="num">1</span><b>Find</b><span>Clones the repo, serves the site or runs its tests, and finds the code the issue talks about. Issue text is treated as data, never as instructions.</span></li>
-      <li><span class="num r">2</span><b>Reproduce</b><span>Gemma 4 reads the issue, the code and a screenshot of the page, then writes a test or browser steps. It only counts if it fails on the current code.</span></li>
-      <li><span class="num g">3</span><b>Point</b><span>You get the failing check, the real output and where to look. Optionally a fix, suggested only after it made that check pass.</span></li>
-    </ol>
-
-    <div class="appcta">
-      <div><b>Add RedGreen to your repos.</b> Install it as a GitHub app, then label an issue <code>redgreen</code> or comment <code>/redgreen</code>. It replies on the issue, like the one above.</div>
-      <button class="btn primary" id="ctaApp" type="button">Set up RedGreen for GitHub</button>
+    <div class="signal">
+      <div class="sig-step"><span class="sig-dot"></span><b>Find</b><p>Clone the repo, serve the site, locate the code the issue is about.</p></div>
+      <div class="sig-step red"><span class="sig-dot"></span><b>Reproduce</b><p>Gemma 4 reads the issue, the code and a screenshot, and writes a check. It must fail.</p></div>
+      <div class="sig-step green"><span class="sig-dot"></span><b>Point</b><p>The failing check, the real output, and where to look, posted on the issue.</p></div>
     </div>
-    <p class="foot">Open source, Apache-2.0 · <a href="https://github.com/samvit-srivastava/redgreen" target="_blank" rel="noopener">github.com/samvit-srivastava/redgreen</a></p>
+    <footer class="foot2"><span>Gemma 4 E4B · runs offline on a laptop GPU · never edits code by default</span><a href="https://github.com/samvit-srivastava/redgreen" target="_blank" rel="noopener">Open source on GitHub</a></footer>
   </section>`;
-  $('#ctaApp').addEventListener('click', () => botView());
+}
+
+function replayCard() {
+  return `<figure class="replay" aria-label="A real exchange on GitHub: an issue, then RedGreen's reply">
+    <div class="gh-card issue-card">
+      <div class="gh-head"><span class="state">Open</span><b>Cart total is wrong after changing quantity with a coupon applied</b></div>
+      <p>Set quantity to 3, apply SAVE20, set it back to 1. Expected <b>$40.00</b>, the total shows <b>$20.00</b>.</p>
+      <div class="cmt"><span class="who">samvit-srivastava</span> commented <code>/redgreen</code></div>
+    </div>
+    <div class="gh-card bot-card">
+      <div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div>
+      <h3><i class="dotred"></i>Reproduced</h3>
+      <pre class="mini"><span class="ok">✓ add Headphones, quantity 3, apply SAVE20</span><span class="ok">✓ set quantity back to 1</span><span class="bad">✗ expect #total to show "$40.00"</span><span class="bad">   actual: "$20.00"</span></pre>
+      <p class="small where">Where to look: <code>app.js</code> · <code>setQuantity()</code></p>
+    </div>
+    <figcaption>Real reply on <a href="https://github.com/samvit-srivastava/tiny-shop/issues/1" target="_blank" rel="noopener">tiny-shop#1</a></figcaption>
+  </figure>`;
+}
+
+function reproducePage() {
+  setTab('reproduce');
+  $('#main').innerHTML = `<section class="pg repro2">
+    <h1 class="pg-h">Reproduce a bug</h1>
+    <p class="pg-sub">Paste an issue from a website or JavaScript project. RedGreen clones it, Gemma 4 writes a check, and it only counts if the check fails.</p>
+    <form class="ghform huge" id="ghIntro">
+      <label for="ghUrlIntro" class="sr">GitHub issue URL</label>
+      <div class="ghrow"><input id="ghUrlIntro" type="url" placeholder="https://github.com/owner/repo/issues/1" required autofocus><button type="submit">Reproduce it</button></div>
+      <p class="gherr" role="alert"></p>
+    </form>
+    <div class="samples"><span>Try:</span><button type="button" data-sample="https://github.com/samvit-srivastava/tiny-shop/issues/1">tiny-shop#1 · website</button></div>
+    <h2 class="sec-h">Recent issues</h2>
+    <div class="icards" id="recent"></div>
+    <p class="muted demo-note">Testing with an app instead of an issue? <a href="/shop/" target="_blank" rel="noopener">Open the instrumented demo shop</a>; its reports appear in History.</p>
+  </section>`;
+  document.querySelectorAll('[data-sample]').forEach((b) => b.addEventListener('click', () => { $('#ghUrlIntro').value = b.dataset.sample; $('#ghUrlIntro').focus(); }));
+  loadLists();
+}
+
+function historyPage() {
+  setTab('history');
+  $('#main').innerHTML = `<section class="pg hist2">
+    <h1 class="pg-h">History</h1>
+    <div class="hcols">
+      <section><h2 class="sec-h">Issues and reports</h2><ul id="reports" class="list big"></ul></section>
+      <section><h2 class="sec-h">Runs</h2><ul id="runs" class="list big"></ul></section>
+    </div>
+  </section>`;
+  loadLists();
 }
 
 function shell(report, savedRun) {
@@ -374,9 +413,10 @@ const swap = (fn) => {
   t.finished.catch(() => {}); t.ready.catch(() => {}); // a newer click can skip this transition; that's fine
   return t.updateCallbackDone;
 };
-async function openReport(id) { const r = await getJSON('/api/reports/' + encodeURIComponent(id)); await swap(() => shell(r, null)); }
-async function openRun(id) {
+async function openReport(id, push = true) { const r = await getJSON('/api/reports/' + encodeURIComponent(id)); if (push) history.pushState(null, '', '#/report/' + id); setTab(r.kind === 'github' ? 'reproduce' : 'history'); await swap(() => shell(r, null)); }
+async function openRun(id, push = true) {
   const run = await getJSON('/api/runs/' + encodeURIComponent(id));
+  if (push) history.pushState(null, '', '#/run/' + id); setTab('history');
   const report = await getJSON('/api/reports/' + encodeURIComponent(run.reportId));
   await swap(() => shell(report, { id: run.id, startedAt: run.startedAt }));
   state.savedRun = run.id;
@@ -400,45 +440,73 @@ function analyze(id) {
 
 /* ---------- GitHub bot page ---------- */
 async function botView() {
+  setTab('github');
   const b = await getJSON('/api/bot');
   state = null;
-  const isApp = b.kind === 'app';
-  const installs = (b.installations || []);
+  const isApp = b.kind === 'app' && b.enabled;
+  const installs = b.installations || [];
+  const s1 = isApp, s2 = isApp && installs.length > 0;
   const repoItems = isApp
-    ? (installs.map((r) => `<li><a href="https://github.com/${esc(r.repo)}/issues" target="_blank" rel="noopener"><code>${esc(r.repo)}</code></a><span class="hint">installed by @${esc(r.account || '')}</span></li>`).join('') || '<li class="empty">Not installed anywhere yet. Use the install button.</li>')
-    : ((b.repos || []).map((r) => `<li><a href="https://github.com/${esc(r)}/issues" target="_blank" rel="noopener"><code>${esc(r)}</code></a><button class="btn small" data-unwatch="${esc(r)}">Remove</button></li>`).join('') || '<li class="empty">No repos yet.</li>');
-  const act = (b.activity || []).map((a) => `<li><span class="at">${clock(a.at)}</span>${esc(a.msg)}</li>`).join('') || '<li class="empty">Nothing yet.</li>';
+    ? (installs.map((r) => `<li><span class="rdot"></span><a href="https://github.com/${esc(r.repo)}/issues" target="_blank" rel="noopener">${esc(r.repo)}</a><span class="muted">by @${esc(r.account || '')}</span></li>`).join('') || '<li class="muted">Not installed anywhere yet.</li>')
+    : ((b.repos || []).map((r) => `<li><span class="rdot"></span><a href="https://github.com/${esc(r)}/issues" target="_blank" rel="noopener">${esc(r)}</a><button class="btn small" data-unwatch="${esc(r)}">Remove</button></li>`).join('') || '<li class="muted">No repos yet.</li>');
+  const act = (b.activity || []).slice(0, 12).map((a) => `<li><span class="at">${clock(a.at)}</span><span>${esc(a.msg)}</span></li>`).join('') || '<li class="muted">Nothing yet. Activity shows up here as the app works.</li>';
   await swap(() => { $('#main').innerHTML = `
-  <section class="botpage">
-    <h1 class="bh">RedGreen for GitHub</h1>
-    <p class="lead">Install RedGreen on any repo, like any GitHub app. When an issue gets the <code>redgreen</code> label, or someone with write access comments <code>/redgreen</code>, RedGreen reproduces the bug and replies with the failing check, where to look, and a fix only if it verified one. It does not change code unless you allow it.</p>
-    ${!b.githubMode ? `<div class="notice err">${esc(b.error)}</div>` : ''}
-    ${isApp && b.enabled ? `<div class="installbar"><div><b>${esc(b.appName || 'RedGreen')}</b> is live as <code>@${esc(b.login)}</code>. Anyone can add it to their repos:</div><a class="go" href="${esc(b.installUrl)}" target="_blank" rel="noopener"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>Install RedGreen on a repo</a></div>` : ''}
-    <div class="botgrid">
-      <section class="sect"><h3>${isApp ? 'GitHub App' : '1. Set up the GitHub App'} ${b.enabled ? '<small class="ok">running</small>' : ''}</h3><div class="body">
-        ${isApp && b.enabled ? `<p>This computer is the worker: it checks every repo the app is installed on and does the red → green work with Gemma 4.</p><button class="btn" id="removeApp">Remove app credentials</button>`
-        : `<p>Create your own RedGreen app on GitHub in one click. GitHub fills in everything and sends the keys straight back here. You type nothing.</p>
-          <button class="go" id="createApp" type="button"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>Create RedGreen on GitHub</button>
-          <details class="manual"><summary>Already registered an app? Enter its details by hand</summary>
-            <form id="appForm" class="appform"><input id="appId" inputmode="numeric" placeholder="App ID" required><label class="file"><input id="appKey" type="file" accept=".pem" required><span>Choose .pem key</span></label><button type="submit" class="btn">Save</button></form>
-          </details>`}
-        <p class="gherr" id="appErr">${b.appConfigured && !b.enabled && b.error ? esc(b.error) : ''}</p></div></section>
-      <section class="sect"><h3>${isApp ? 'Installed on' : '2. Repos'}</h3><div class="body">
-        <ul class="repolist">${repoItems}</ul>
-        ${isApp ? '<p class="hint">New installs are picked up within 30 seconds.</p>' : `
-        <details ${b.kind === 'token' ? 'open' : ''}><summary>Or use a personal token instead of an app</summary>
-          ${b.kind === 'token' ? `<p>Connected as <b>@${esc(b.login)}</b>. <button class="btn small" id="disconnect">Disconnect</button></p>
-            <form id="repoForm" class="ghrow"><input id="repoIn" placeholder="owner/repo" required><button type="submit" class="btn">Add repo</button></form>`
-          : `<form id="tokForm" class="ghrow"><input id="tok" type="password" autocomplete="off" placeholder="github_pat_…" required><button type="submit" class="btn">Connect</button></form>`}
-          <p class="gherr" id="tokErr"></p></details>`}
-        <p class="hint">Contributing to someone else's project? Install RedGreen on your fork and comment <code>/redgreen https://github.com/owner/project/issues/42</code> on an issue there.</p></div></section>
-      <section class="sect"><h3>What RedGreen does</h3><div class="body">
-        <p class="hint" style="margin-top:0">By default RedGreen only <b>reproduces</b>: it proves the bug with a failing check and points to where to look. It never changes code.</p>
-        <label class="check"><input type="checkbox" id="tryFix" ${b.tryFix ? 'checked' : ''} ${b.githubMode ? '' : 'disabled'}> Also try a fix, and suggest it only if it makes the failing check pass</label>
-        <label class="check" style="margin-top:8px"><input type="checkbox" id="openPrs" ${b.openPrs ? 'checked' : ''} ${b.enabled && b.tryFix ? '' : 'disabled'}> Also open a pull request for verified fixes</label>
-        </div></section>
-      <section class="sect"><h3>Activity ${b.current ? `<small>working on ${esc(b.current.repo)}#${b.current.number}</small>` : ''}</h3><ul class="activity">${act}</ul></section>
+  <section class="pg gh2">
+    <div class="gh-hero">
+      <div>
+        <h1 class="pg-h">RedGreen for GitHub</h1>
+        <p class="pg-sub">An app anyone can add to their repos, like any GitHub app. Label an issue <code>redgreen</code> or comment <code>/redgreen</code>; it replies with a failing check and where to look.</p>
+      </div>
+      <div class="gh-status ${isApp ? 'live' : ''}">
+        <span class="lamps"><i class="l r"></i><i class="l g"></i></span>
+        <div><b>${isApp ? 'Live' : 'Not set up'}</b><span>${isApp ? `as @${esc(b.login)}${b.current ? ` · working on ${esc(b.current.repo)}#${b.current.number}` : ''}` : 'Two clicks to go live'}</span></div>
+      </div>
     </div>
+    ${!b.githubMode ? `<div class="notice err">${esc(b.error)}</div>` : ''}
+
+    <ol class="steps2">
+      <li class="${s1 ? 'done' : 'now'}">
+        <span class="sn">${s1 ? '✓' : '1'}</span>
+        <div class="sc"><h3>Create the app</h3>
+          ${s1 ? `<p><b>${esc(b.appName || 'RedGreen')}</b> exists on GitHub. This computer is its worker: it checks every repo the app is installed on and runs Gemma 4 locally.</p>`
+               : `<p>GitHub fills in everything and sends the keys straight back here. Nothing to type.</p><button class="cta-main" id="createApp" type="button">Create RedGreen on GitHub</button>`}
+          <p class="gherr" id="appErr">${b.githubMode && b.appConfigured && !b.enabled && b.error ? esc(b.error) : ''}</p>
+        </div>
+      </li>
+      <li class="${s2 ? 'done' : s1 ? 'now' : ''}">
+        <span class="sn">${s2 ? '✓' : '2'}</span>
+        <div class="sc"><h3>Install it on repos</h3>
+          <p>Pick repos on GitHub's own install screen. Share the same link with anyone who wants RedGreen on theirs.</p>
+          ${isApp ? `<a class="${s2 ? 'cta-alt' : 'cta-main'}" href="${esc(b.installUrl)}" target="_blank" rel="noopener">${s2 ? 'Add more repos' : 'Install RedGreen on a repo'}</a>` : '<span class="muted">Available after step 1.</span>'}
+          ${s2 ? `<ul class="repos2">${repoItems}</ul>` : ''}
+        </div>
+      </li>
+      <li class="${s2 ? 'now' : ''}">
+        <span class="sn">3</span>
+        <div class="sc"><h3>Trigger it on an issue</h3>
+          <div class="trigger"><span class="label-chip">redgreen</span><span class="or">or comment</span><code class="cmt-chip">/redgreen</code></div>
+          <p class="muted">Only people with write access can trigger it, because it runs the repo's code on this computer. On a fork, point it upstream: <code>/redgreen https://github.com/owner/project/issues/42</code></p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="gh-cols">
+      <section class="panel2"><h2 class="sec-h">What it may do</h2>
+        <label class="switch"><input type="checkbox" id="tryFix" ${b.tryFix ? 'checked' : ''} ${b.githubMode ? '' : 'disabled'}><span class="sw"></span><span><b>Suggest a verified fix</b><small>Only when the patch makes the failing check pass. Off: it only reproduces.</small></span></label>
+        <label class="switch"><input type="checkbox" id="openPrs" ${b.openPrs ? 'checked' : ''} ${b.enabled && b.tryFix ? '' : 'disabled'}><span class="sw"></span><span><b>Open pull requests</b><small>For verified fixes only. Off by default.</small></span></label>
+      </section>
+      <section class="panel2"><h2 class="sec-h">Activity</h2><ul class="act2">${act}</ul></section>
+    </div>
+
+    <details class="adv"><summary>Advanced: use an existing app or a personal token</summary>
+      <div class="advbody">
+        <form id="appForm" class="appform"><input id="appId" inputmode="numeric" placeholder="App ID" required><label class="file"><input id="appKey" type="file" accept=".pem" required><span>Choose .pem key</span></label><button type="submit" class="btn">Save</button></form>
+        ${isApp ? '<button class="btn small" id="removeApp" type="button">Remove app credentials</button>' : ''}
+        ${b.kind === 'token' ? `<p>Personal token connected as <b>@${esc(b.login)}</b>. <button class="btn small" id="disconnect">Disconnect</button></p><form id="repoForm" class="ghrow"><input id="repoIn" placeholder="owner/repo" required><button type="submit" class="btn">Add repo</button></form>${b.kind === 'token' ? `<ul class="repos2">${repoItems}</ul>` : ''}`
+          : isApp ? '' : `<form id="tokForm" class="ghrow"><input id="tok" type="password" autocomplete="off" placeholder="github_pat_…" required><button type="submit" class="btn">Use token</button></form>`}
+        <p class="gherr" id="tokErr"></p>
+      </div>
+    </details>
   </section>`; });
   const post = (url, body, method = 'POST') => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }).then(async (r) => ({ ok: r.ok, j: await r.json() }));
   $('#appForm')?.addEventListener('submit', async (e) => {
@@ -463,7 +531,7 @@ async function botView() {
   $('#tryFix')?.addEventListener('change', async (e) => { await post('/api/bot/settings', { tryFix: e.target.checked }); botView(); });
   document.querySelectorAll('[data-unwatch]').forEach((btn) => btn.addEventListener('click', async () => { const [o, r] = btn.dataset.unwatch.split('/'); await post(`/api/bot/repos/${o}/${r}`, null, 'DELETE'); botView(); loadStatus(); }));
 }
-document.addEventListener('click', (e) => { if (e.target.closest('#botLink') && !running) botView(); });
+
 
 /* ---------- follow bot runs live ---------- */
 let botCase = null;
@@ -486,5 +554,36 @@ function followBot() {
   };
 }
 
-intro(); loadStatus(); loadLists(); followBot();
-if (location.hash.startsWith('#bot')) { botView().then(() => { if (location.hash === '#bot-error') $('#appErr').textContent = 'GitHub did not finish creating the app. Try again.'; history.replaceState(null, '', '/'); }); } setInterval(loadStatus, 10000);
+/* ---------- router + splash ---------- */
+function route() {
+  if (running) return;
+  const h = location.hash;
+  let m;
+  if ((m = h.match(/^#\/report\/(\w+)/))) return openReport(m[1], false);
+  if ((m = h.match(/^#\/run\/(\w+)/))) return openRun(m[1], false);
+  if (h.startsWith('#/reproduce')) return swap(reproducePage);
+  if (h.startsWith('#/history')) return swap(historyPage);
+  if (h.startsWith('#/github') || h.startsWith('#bot')) {
+    const err = h === '#bot-error';
+    if (h.startsWith('#bot')) history.replaceState(null, '', '#/github');
+    return botView().then(() => { if (err && $('#appErr')) $('#appErr').textContent = 'GitHub did not finish creating the app. Try again.'; });
+  }
+  return swap(home);
+}
+window.addEventListener('hashchange', route);
+window.addEventListener('popstate', route);
+$('#sysBtn').addEventListener('click', () => { const p = $('#sysPop'); p.hidden = !p.hidden; $('#sysBtn').setAttribute('aria-expanded', String(!p.hidden)); });
+document.addEventListener('click', (e) => { if (!e.target.closest('.sys-wrap')) { $('#sysPop').hidden = true; $('#sysBtn').setAttribute('aria-expanded', 'false'); } });
+
+const splashStart = Date.now();
+let splashGone = false;
+function statusReady() {
+  if (splashGone) return;
+  splashGone = true;
+  const sp = $('#splash'); const msg = $('#spMsg');
+  if (msg) msg.textContent = lastStatus?.model?.ok ? 'Gemma 4 ready' : 'Ready';
+  setTimeout(() => { sp.classList.add('done'); setTimeout(() => sp.remove(), 700); }, Math.max(0, 1500 - (Date.now() - splashStart)));
+}
+setTimeout(statusReady, 4500); // never hold the page hostage
+
+route(); loadStatus(); followBot(); setInterval(loadStatus, 10000);
