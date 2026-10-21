@@ -17,6 +17,11 @@ const DATA = process.env.REDGREEN_DATA || path.join(ROOT, 'data');
 const REPORTS = path.join(DATA, 'reports');
 const RUNS = path.join(DATA, 'runs');
 const REPOS = path.join(DATA, 'repos');
+// GitHub mode runs a cloned repo's own code (its `npm test`, its runner, and Gemma's patch to it) on this machine.
+// Only node:test repro tests can run under the permission model; everything else is outside the sandbox.
+// So it is OFF unless explicitly enabled for repos you trust.
+const REPO_CODE_ALLOWED = process.env.REDGREEN_ALLOW_REPO_CODE === '1';
+const REPO_MODE_OFF = 'GitHub mode is off: it runs the repository\'s own code and tests on this machine, outside the RedGreen sandbox. Only enable it for repos you trust: restart with REDGREEN_ALLOW_REPO_CODE=1.';
 fs.mkdirSync(REPORTS, { recursive: true }); fs.mkdirSync(RUNS, { recursive: true });
 const PORT = Number(process.env.PORT || 3000);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2', '.diff': 'text/x-diff; charset=utf-8' };
@@ -63,7 +68,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- API
-    if (p === '/api/status') return send(res, 200, { model: await modelStatus(), sandbox: sandboxInfo, busy });
+    if (p === '/api/status') return send(res, 200, { model: await modelStatus(), sandbox: sandboxInfo, busy, githubMode: { enabled: REPO_CODE_ALLOWED, isolation: 'node:test repro tests run under the permission model; the repo\'s own suite and other runners run unsandboxed (temp clone, timeout, minimal env, install scripts disabled)' } });
     if (p === '/api/reports' && req.method === 'POST') {
       const raw = await readBody(req);
       if (raw.schema !== 'redgreen.evidence/v1' || !Array.isArray(raw.events)) return send(res, 400, { error: 'invalid evidence bundle' });
@@ -79,11 +84,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/issues' && req.method === 'POST') {
       // GitHub mode: store the issue as a case; cloning/installing happens when the run starts (streamed live).
+      if (!REPO_CODE_ALLOWED) return send(res, 403, { error: REPO_MODE_OFF });
       const { url } = await readBody(req, 10000);
       let ref; try { ref = parseIssueUrl(url); } catch (e) { return send(res, 400, { error: e.message }); }
-      let issue; try { issue = await fetchIssue(ref); } catch (e) { return send(res, 502, { error: e.message }); }
+      let fetched; try { fetched = await fetchIssue(ref); } catch (e) { return send(res, 502, { error: e.message }); }
+      // Issue text is untrusted user content: redact it before it is stored or sent to the model.
+      const { value: issue, count: issueRedactions } = redact(fetched);
       const id = 'gh_' + Date.now().toString(36);
-      const rec = { schema: 'redgreen.issue/v1', kind: 'github', id, description: issue.title, issue, repo: ref, events: [], redactions: 0, savedAt: new Date().toISOString() };
+      const rec = { schema: 'redgreen.issue/v1', kind: 'github', id, description: issue.title, issue, repo: ref, events: [], redactions: issueRedactions, savedAt: new Date().toISOString() };
       fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
       return send(res, 201, { id, title: issue.title });
     }
@@ -119,6 +127,7 @@ const server = http.createServer(async (req, res) => {
       const ping = setInterval(() => res.write(': ping\n\n'), 10000);
       try {
         const report = JSON.parse(fs.readFileSync(f, 'utf8'));
+        if (report.kind === 'github' && !REPO_CODE_ALLOWED) { emit({ type: 'fatal', error: REPO_MODE_OFF }); return; }
         const run = report.kind === 'github'
           ? await runRepoPipeline({ kase: report, reposDir: REPOS, emit })
           : await runPipeline({ report, fixtureDir: FIXTURE, emit });

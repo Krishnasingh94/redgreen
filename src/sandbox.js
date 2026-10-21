@@ -46,6 +46,10 @@ export const sandboxInfo = {
 };
 
 // baseDir is optional (tests use it to prove paths with spaces work).
+// Permission-model flags that give read-only access to `dir` (no writes, no child processes, no workers).
+// Empty when this Node version has no usable permission model.
+export function permissionArgs(dir) { return READ_ARGS ? [PERM_FLAG, ...READ_ARGS(dir)] : []; }
+
 export function createWorkspace(fixtureDir, baseDir = os.tmpdir()) {
   // realpath: on Windows %TEMP% is often an 8.3 short path (C:\Users\KRISHN~1\...) while Node's module
   // loader reads the long real path, which the permission model would then deny. Use the real path everywhere.
