@@ -1,5 +1,7 @@
 # RedGreen 🔴🟢
 
+[![tests](https://github.com/samvit-srivastava/redgreen/actions/workflows/test.yml/badge.svg)](https://github.com/samvit-srivastava/redgreen/actions/workflows/test.yml)
+
 **Bug report → failing test → verified fix, on local Gemma 4. No proof, no fix.**
 
 AI coding tools are good at *saying* they fixed a bug. RedGreen won't let them until it's proven: a check must **fail on the current code** (🔴 RED), and after Gemma's patch the **same check must pass** with nothing else broken (🟢 GREEN). The verdict comes from real test runs, never from the model.
@@ -95,6 +97,8 @@ fixtures/shop/       synthetic demo app + recorder.js
 ```
 
 ## Safety & privacy
+
+- **GitHub mode (paste an issue URL) is off by default.** It clones the repo and runs *that repo's* own code: its `npm test`, its test runner, and Gemma's patch to its source. For `node:test` repos the reproduction test runs under the permission model (read-only, no writes, no child processes), but the repo's own suite and Jest/Vitest/Mocha runs are **not** sandboxed (they get a temp clone, a timeout, a minimal environment, and dependency install scripts disabled). Enable it only for repos you trust: `REDGREEN_ALLOW_REPO_CODE=1 npm start`. Issue text is redacted like bug reports.
 
 - Evidence is redacted (bearer tokens, API keys, JWTs, emails, card-like numbers, secret query params, `Authorization`/`Cookie` headers) **before** it is written to disk or sent to the model.
 - Screenshots are attached only if the user chooses one, and are kept locally.
