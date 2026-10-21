@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<link rel="icon" href="data:,">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demo Shop</title>
+<style>
+  :root{--bg:#f7f5f0;--card:#fff;--ink:#1d1d1b;--muted:#6b6862;--line:#e3dfd6;--acc:#2b5cff}
+  *{box-sizing:border-box} body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:var(--card)}
+  .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:99px}
+  main{max-width:880px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:1fr 320px;gap:20px}
+  @media(max-width:760px){main{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .product{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+  .product:last-child{border:0}
+  button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;cursor:pointer}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  input{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;width:100%}
+  .row{display:flex;justify-content:space-between;margin:6px 0}
+  .total{font-size:20px;font-weight:700}
+  .line{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .line input{width:64px}
+  #msg{margin-top:10px;font-size:14px;min-height:20px}
+  .err{color:#b42318}.ok{color:#067647}
+  dialog{border:1px solid var(--line);border-radius:12px;max-width:460px;width:calc(100% - 32px)}
+  textarea{width:100%;min-height:90px;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px}
+  #report{position:fixed;right:16px;bottom:16px;background:#1d1d1b;color:#fff;border:0;padding:10px 16px;border-radius:99px}
+</style>
+</head>
+<body>
+<header><strong>Demo Shop</strong><span class="tag">synthetic demo app</span></header>
+<main>
+  <section class="card">
+    <h3 style="margin-top:0">Products</h3>
+    <div class="product"><span>Headphones — $50.00</span><button data-add="hp">Add</button></div>
+    <div class="product"><span>USB-C Cable — $12.50</span><button data-add="cb">Add</button></div>
+    <div class="product"><span>Laptop Stand — $35.00</span><button data-add="ls">Add</button></div>
+  </section>
+  <section class="card">
+    <h3 style="margin-top:0">Cart</h3>
+    <div id="lines"><p style="color:var(--muted)">Empty</p></div>
+    <div class="line"><input id="coupon" placeholder="Coupon (try SAVE20)" style="width:auto;flex:1"><button id="apply">Apply</button></div>
+    <div class="row"><span>Subtotal</span><span id="sub">$0.00</span></div>
+    <div class="row"><span>Discount</span><span id="disc">$0.00</span></div>
+    <div class="row total"><span>Total</span><span id="tot">$0.00</span></div>
+    <input id="email" type="email" placeholder="Email for receipt" value="priya.sharma@example.com" style="margin:8px 0">
+    <button class="primary" id="checkout" style="width:100%">Checkout</button>
+    <div id="msg"></div>
+  </section>
+</main>
+<button id="report">🐞 Report bug</button>
+<dialog id="dlg">
+  <h3 style="margin-top:0">Report a bug</h3>
+  <p style="font-size:14px;color:var(--muted)">We'll attach a log of your actions, errors and failed requests on this page. Emails, tokens and cookies are redacted before saving.</p>
+  <label style="display:block;font-size:13px;margin:8px 0 4px;color:var(--muted)">Screenshot (optional, read by Gemma 4 vision)</label>
+  <input id="shot" type="file" accept="image/png,image/jpeg,image/webp" style="margin-bottom:8px">
+  <textarea id="desc">Total looked way too low after I changed the quantity, then checkout failed.</textarea>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+    <button id="cancel">Cancel</button><button class="primary" id="send">Send report</button>
+  </div>
+  <p id="sent" style="font-size:14px"></p>
+</dialog>
+<script type="module">
+import * as Cart from '/shop/src/cart.js';
+import { recordAction, getBundle } from '/shop/public/recorder.js';
+
+const CATALOG = { hp: { id: 'hp', name: 'Headphones', price: 50 }, cb: { id: 'cb', name: 'USB-C Cable', price: 12.5 }, ls: { id: 'ls', name: 'Laptop Stand', price: 35 } };
+const cart = Cart.createCart();
+const $ = (s) => document.querySelector(s);
+const money = (n) => '$' + n.toFixed(2);
+const snap = () => ({ items: cart.items.map((i) => ({ id: i.id, qty: i.qty, price: i.price })), coupon: cart.coupon, discount: cart.discount, subtotal: Cart.subtotal(cart), total: Cart.total(cart) });
+
+function act(name, args, fn) {
+  try { fn(); recordAction(name, args, snap()); }
+  catch (e) { recordAction(name, args, { error: e.message }); console.error(e.message); show(e.message, 'err'); }
+  render();
+}
+function show(text, cls) { const m = $('#msg'); m.textContent = text; m.className = cls || ''; }
+function render() {
+  const lines = $('#lines');
+  lines.innerHTML = cart.items.length ? '' : '<p style="color:var(--muted)">Empty</p>';
+  for (const it of cart.items) {
+    const d = document.createElement('div'); d.className = 'line';
+    d.innerHTML = `<span style="flex:1">${it.name}</span><input type="number" min="0" value="${it.qty}">`;
+    d.querySelector('input').addEventListener('change', (e) => act('setQuantity', [it.id, Number(e.target.value)], () => Cart.setQuantity(cart, it.id, Number(e.target.value))));
+    lines.appendChild(d);
+  }
+  $('#sub').textContent = money(Cart.subtotal(cart));
+  $('#disc').textContent = '−' + money(cart.discount);
+  $('#tot').textContent = money(Cart.total(cart));
+}
+document.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => {
+  const p = CATALOG[b.dataset.add]; act('addItem', [p, 1], () => Cart.addItem(cart, p, 1));
+}));
+$('#apply').addEventListener('click', () => { const c = $('#coupon').value.trim().toUpperCase(); act('applyCoupon', [c], () => Cart.applyCoupon(cart, c)); });
+$('#checkout').addEventListener('click', async () => {
+  const res = await fetch('/shop/api/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer demo_FAKE_token_not_a_real_secret_0000' },
+    body: JSON.stringify({ email: $('#email').value, items: cart.items, coupon: cart.coupon, clientTotal: Cart.total(cart) }),
+  });
+  const body = await res.json();
+  if (res.ok) show('Order placed: ' + money(body.charged), 'ok');
+  else { console.error('Checkout failed: ' + body.error); show('Checkout failed: ' + body.error, 'err'); }
+});
+$('#report').addEventListener('click', () => { $('#sent').textContent = ''; $('#dlg').showModal(); });
+$('#cancel').addEventListener('click', () => $('#dlg').close());
+$('#send').addEventListener('click', async () => {
+  const bundle = getBundle($('#desc').value);
+  const file = $('#shot').files[0];
+  if (file) {
+    if (file.size > 4_000_000) { $('#sent').textContent = 'Screenshot too large (max 4 MB)'; return; }
+    bundle.screenshot = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(file); });
+  }
+  const res = await fetch('/api/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bundle) });
+  const j = await res.json();
+  $('#sent').innerHTML = res.ok ? `Saved report <b>${j.id}</b> (${j.redactions} values redacted). <a href="/" target="_blank">Open in RedGreen →</a>` : 'Failed: ' + j.error;
+});
+render();
+</script>
+</body>
+</html>
