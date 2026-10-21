@@ -188,12 +188,12 @@ function runScope(cv) {
   const sig = (x, k) => {
     const base = Math.sin(x * 9 + k * 2) * 0.18 + Math.sin(x * 23 - k * 3) * 0.06;
     const bump = Math.exp(-Math.pow((x - mx) * 7, 2)) * (my - 0.5) * 1.6;           // pointer bends the wave
-    const glitch = Math.exp(-Math.pow((x - 0.62) * 30, 2)) * Math.sin(k * 40) * 0.25;  // the bug: a spike
+    const glitch = -Math.exp(-Math.pow((x - 0.62) * 22, 2)) * 0.22;                     // the bug: one clean dip
     return base + bump + glitch;
   };
   const frame = () => {
     t += 0.016;
-    ctx.fillStyle = 'rgba(6,10,14,0.28)'; ctx.fillRect(0, 0, w, h);                   // phosphor persistence
+    ctx.clearRect(0, 0, w, h);
     ctx.strokeStyle = 'rgba(120,160,190,0.07)'; ctx.lineWidth = 1;
     const gx = w / 12, gy = h / 8;
     ctx.beginPath(); for (let i = 1; i < 12; i++) { ctx.moveTo(i * gx, 0); ctx.lineTo(i * gx, h); } for (let j = 1; j < 8; j++) { ctx.moveTo(0, j * gy); ctx.lineTo(w, j * gy); } ctx.stroke();

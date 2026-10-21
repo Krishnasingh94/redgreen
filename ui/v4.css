@@ -55,8 +55,10 @@ body.on-home::before{display:none}
 .half.green b{color:#2FD67C;text-shadow:0 0 80px rgba(47,214,124,.35)}
 .half p{font-size:18px;line-height:1.5;color:rgba(233,238,243,.75);max-width:34ch;margin:18px 0 22px}
 .half p i{font-style:normal;color:#fff;font-weight:700}
-.go4{font-weight:800;font-size:15px;opacity:.6;transition:opacity .3s,transform .3s var(--ease)}
-.half:hover .go4{opacity:1;transform:translateX(8px)}
+.go4{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:15px;padding:11px 22px;border:1.5px solid currentColor;border-radius:999px;color:var(--ink);opacity:.75;transition:opacity .3s,transform .3s var(--ease),background .3s,color .3s}
+.half.red .go4{color:var(--red-ink)}.half.green .go4{color:var(--green-ink)}
+.half.red:hover .go4{background:var(--red-ink);color:#140606}.half.green:hover .go4{background:var(--green-ink);color:#04140b}
+.half:hover .go4{opacity:1;transform:translateX(6px)}
 @media (max-width:800px){.split{flex-direction:column}.half:hover{flex:1}}
 
 /* story inside full-bleed */
