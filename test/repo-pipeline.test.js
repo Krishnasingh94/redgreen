@@ -55,8 +55,11 @@ test('GitHub mode: malformed model output is rejected with reasons, then RED →
   assert.match(rejected[2].reason, /functions\[0\] must be \{"file": string, "name": string, "code": string\}/);
   assert.equal(r.verdict, 'fixed_verified', JSON.stringify(r.steps.filter((s) => s.reason || s.error), null, 1));
   assert.match(r.prMarkdown, /Verified by RedGreen/);
-  // the clone is left clean for the next run
-  assert.equal(fs.readFileSync(path.join(reposDir, 'acme__calc', 'src', 'add.js'), 'utf8'), 'export function add(a, b) {\n  return a - b;\n}\n');
+  // the clone is left clean for the next run (git's view; content compared ignoring CRLF, since a Windows
+  // checkout with core.autocrlf=true restores files with CRLF)
+  const dir = path.join(reposDir, 'acme__calc');
+  assert.equal(spawnSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' }).stdout.trim(), '');
+  assert.equal(fs.readFileSync(path.join(dir, 'src', 'add.js'), 'utf8').replace(/\r\n/g, '\n'), 'export function add(a, b) {\n  return a - b;\n}\n');
 });
 
 test('GitHub mode: model unreachable on every attempt → not_reproduced with an explicit reason', { skip: !HAS_GIT && 'git not installed' }, async () => {

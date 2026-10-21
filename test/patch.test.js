@@ -15,7 +15,8 @@ const HAS_GIT = spawnSync('git', ['--version']).status === 0;
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rg patch '));
 function gitApply(dir, patch) {
   fs.writeFileSync(path.join(dir, 'x.patch'), patch);
-  const r = spawnSync('git', ['apply', '--whitespace=nowarn', 'x.patch'], { cwd: dir, encoding: 'utf8' });
+  // autocrlf=false: these tests check the diff byte for byte (Windows runners set core.autocrlf=true globally)
+  const r = spawnSync('git', ['-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', 'x.patch'], { cwd: dir, encoding: 'utf8' });
   fs.rmSync(path.join(dir, 'x.patch'));
   return r;
 }
