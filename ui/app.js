@@ -138,7 +138,6 @@ function home() {
       <div class="scroll-hint" aria-hidden="true">scroll</div>
     </div>
 
-    <div class="ticker" aria-label="Lines from real RedGreen runs"><div class="tk">${tickerLines()}${tickerLines()}</div></div>
 
     <div class="split">
       <a class="half red" href="#/reproduce"><span class="k">CH1</span><b>FAILS</b><p>on the code as it is. Expected <i>3 results</i>, got <i>0</i>. Only a failure that matches the issue counts.</p><span class="go4">Reproduce →</span></a>
@@ -146,14 +145,6 @@ function home() {
     </div>
 
     <div class="story s4">
-      <div class="story-vis"><div class="vis" id="vis" data-stage="1">
-        <p class="ex-label"><i></i>Example run · how a reproduction plays out</p>
-        <div class="v-card v-issue"><div class="gh-head"><span class="state">Open</span><b>Search finds nothing when the query has a capital letter</b></div><p>Searching <b>"Dark Mode"</b> shows <b>No results</b>. Lowercase <b>"dark mode"</b> finds 3 articles.</p><div class="cmt"><span class="who">maintainer</span> commented <code>/redgreen</code></div></div>
-        <div class="v-card v-find"><div class="v-row"><span class="spin"></span>Clones the repo, serves the site</div><div class="v-files"><code>search.js</code><code>index.html</code><code>articles.json</code></div></div>
-        <div class="v-card v-gemma"><div class="v-row"><span class="gem"></span>Gemma 4 reads the page</div>
-          <div class="mshop"><div class="mshop-h">Help Center</div><div class="mshop-b msearch"><div class="mp"><span>Search</span><em class="mq">Dark Mode<i>⌕</i></em></div><div class="mcart"><span>Results</span><span class="mt"><b>No results found</b></span></div></div><span class="mscan"></span></div></div>
-        <div class="v-card v-red"><div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div><h3><i class="dotred"></i>Reproduced</h3><pre class="mini"><span class="bad">✗ expect .result count to be 3</span><span class="bad">   actual: 0</span></pre><p class="small">Where to look: <code>search.js</code> · <code>matchArticle()</code></p></div>
-      </div></div>
       <div class="story-text">
         <article data-step="1"><span class="sn3">01 / ISSUE</span><h2>“The total is wrong.”</h2><p>A maintainer comments <code>/redgreen</code> or adds the <code>redgreen</code> label. That's the whole setup.</p></article>
         <article data-step="2"><span class="sn3">02 / FIND</span><h2>Clone. Serve. Search.</h2><p>RedGreen clones the repo, runs the site or its tests, and picks the files the issue is about with keyword search you can see.</p></article>
@@ -169,7 +160,7 @@ function home() {
       <footer class="foot4"><span>Open source · Apache-2.0</span><a href="https://github.com/samvit-srivastava/redgreen" target="_blank" rel="noopener">github.com/samvit-srivastava/redgreen</a></footer>
     </div>
   </section>`;
-  const vis = $('#vis');
+  const vis = $('#vis') || {dataset:{}};
   const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { vis.dataset.stage = e.target.dataset.step; document.querySelectorAll('.story-text article').forEach((a) => a.classList.toggle('on', a === e.target)); } }), { rootMargin: '-45% 0px -45% 0px' });
   document.querySelectorAll('.story-text article').forEach((a) => io.observe(a));
   document.querySelectorAll('.magnet').forEach((b) => {

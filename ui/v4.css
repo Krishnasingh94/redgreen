@@ -89,3 +89,9 @@ body.on-home::before{display:none}
 
 .msearch .mq{display:flex;justify-content:space-between;border:1px solid #C9BBA5;padding:3px 6px;color:#2B2118;font-style:normal}
 .msearch .mt b{color:#C8331F}
+
+.s4 .story{grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 60px;align-items:start}
+.s4 .story-text article{justify-content:flex-start}
+.s4 .story-text{display:contents}
+.s4 .story-text article{min-height:auto;opacity:1;padding:34px 0;border-top:1px solid #1A2430}
+@media (max-width:800px){.s4 .story{grid-template-columns:1fr}}
