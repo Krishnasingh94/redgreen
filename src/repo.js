@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, npmCli } from './github.js';
+import { permissionArgs } from './sandbox.js';
 
 export function reproTestPath(project) {
   const ext = project.runner === 'jest' && !project.esm ? '.test.js' : project.runner === 'jest' ? '.test.js' : project.runner === 'vitest' ? '.test.js' : '.test.mjs';
@@ -23,13 +24,16 @@ function firstExisting(...ps) { return ps.find((p) => fs.existsSync(p)); }
 const ENV = () => ({ ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, TEMP: process.env.TEMP, TMP: process.env.TMP, APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, USERPROFILE: process.env.USERPROFILE, ComSpec: process.env.ComSpec } : { PATH: process.env.PATH, HOME: process.env.HOME }), CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', NODE_ENV: 'test' });
 
 // Run ONE test file with the repo's runner. No shell; timeout; minimal env.
-export async function runOne(dir, project, rel, timeoutMs = 60000) {
+export async function runOne(givenDir, project, rel, timeoutMs = 60000) {
+  const dir = fs.realpathSync.native(givenDir); // real path for cwd + permission flags (Windows short 8.3 temp paths)
   let args;
   switch (project.runner) {
     case 'vitest': { const v = firstExisting(bin(dir, 'vitest', 'vitest.mjs')); if (!v) throw new Error('vitest is not installed in the repo'); args = [v, 'run', rel]; break; }
     case 'jest': { const j = firstExisting(bin(dir, 'jest', 'bin', 'jest.js'), bin(dir, 'jest-cli', 'bin', 'jest.js')); if (!j) throw new Error('jest is not installed in the repo'); args = [j, '--ci', '--runTestsByPath', rel]; break; }
     case 'mocha': { const m = firstExisting(bin(dir, 'mocha', 'bin', 'mocha.js'), bin(dir, 'mocha', 'bin', 'mocha')); if (!m) throw new Error('mocha is not installed in the repo'); args = [m, rel]; break; }
-    default: args = ['--test', rel];
+    // node:test: run the file in-process under the permission model (read-only repo dir, no writes, no
+    // child processes). Not `--test`, which would spawn a child process and need --allow-child-process.
+    default: args = [...permissionArgs(dir), '--test-reporter=spec', rel];
   }
   const t0 = Date.now();
   const r = await run(process.execPath, args, { cwd: dir, timeoutMs, env: ENV() });
@@ -55,7 +59,7 @@ function summarize(file, r, ms, dir) {
 
 // A failing repro test only counts if it failed because of the code under test, not because the test itself is broken.
 export function brokenTest(out) {
-  const m = out.match(/SyntaxError[^\n]*|Cannot find module[^\n]*|ERR_MODULE_NOT_FOUND[^\n]*|does not provide an export named[^\n]*|Failed to (load url|resolve import)[^\n]*|No test files? found[^\n]*|Your test suite must contain at least one test|ReferenceError: (test|it|describe|expect|assert) is not defined|killed after \d+ms/);
+  const m = out.match(/SyntaxError[^\n]*|Cannot find module[^\n]*|ERR_MODULE_NOT_FOUND[^\n]*|does not provide an export named[^\n]*|Failed to (load url|resolve import)[^\n]*|No test files? found[^\n]*|Your test suite must contain at least one test|ReferenceError: (test|it|describe|expect|assert) is not defined|killed after \d+ms|ERR_ACCESS_DENIED[^\n]*/);
   return m ? m[0].slice(0, 200) : null;
 }
 
@@ -119,6 +123,9 @@ export function applyRepoPatch(dir, allowedFiles, functions) {
     if (!allowedFiles.includes(file)) throw new Error(`change ${i + 1}: "${file}" is not one of the files shown to you (${allowedFiles.join(', ')})`);
     let code = String(f.code || '').replace(/^\s*```(?:[jt]sx?|javascript|typescript)?\s*\n?|```\s*$/g, '');
     let src = changed.get(file) ?? fs.readFileSync(path.join(dir, file), 'utf8');
+    // Keep the file's own line endings (a Windows checkout with core.autocrlf=true is CRLF; the model writes LF),
+    // so the patch doesn't leave mixed endings or turn the diff into noise.
+    if (/\r\n/.test(src)) code = code.replace(/\r?\n/g, '\r\n');
     if (String(f.name).trim() === '*') {
       if (src.split('\n').length > 200) throw new Error(`"${file}" is too large to rewrite whole; change individual functions instead`);
       if (code.trim() === src.trim()) continue;

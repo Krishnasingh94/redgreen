@@ -39,3 +39,15 @@ test('an infinite-loop test is killed at the timeout and reported as a failed, n
   assert.match(r.output, /killed after 1500ms timeout/);
   assert.ok(r.durationMs >= 1500 && r.durationMs < 6000, `durationMs=${r.durationMs}`);
 });
+
+test('runTestFile works when given a non-real path to the workspace (Windows 8.3 short temp paths, symlinks)', async () => {
+  const ws = createWorkspace(FIXTURE);
+  const alias = path.join(path.dirname(ws), 'alias-' + path.basename(ws));
+  fs.symlinkSync(ws, alias, 'junction'); // junction: works on Windows without admin rights; plain symlink elsewhere
+  try {
+    const r = await runTestFile(alias, 'test/cart.test.js');
+    assert.equal(r.passed, true, r.output);
+    assert.equal(r.pass, 5);
+    assert.ok(!r.output.includes(alias) && !r.output.includes(ws), 'both path forms are masked');
+  } finally { fs.rmSync(alias, { force: true, recursive: false }); removeWorkspace(ws); }
+});
