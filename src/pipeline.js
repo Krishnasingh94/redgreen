@@ -77,7 +77,13 @@ export const isBadOutput = (e) => /did not return valid JSON|empty model respons
 const REPRO_SHAPE = 'Return ONE JSON object with: hypothesis (string), evidence_ids (array of strings), expected (string), actual (string), test_name (string), test_code (string).';
 const FIX_SHAPE = 'Return ONE JSON object with: root_cause (string), change (string), functions (non-empty array of {"name": string, "code": string} where code is the complete rewritten function), explanation (string).';
 
-export async function runPipeline({ report, fixtureDir, emit, fix: tryFix = true }) {
+// Cancellation: the server aborts `signal` when the client disconnects. Checked between steps, so an abandoned
+// run stops at the next checkpoint instead of holding the single run slot for minutes.
+export function cancelled(signal) {
+  if (signal?.aborted) throw Object.assign(new Error('run cancelled: the client disconnected'), { cancelled: true });
+}
+
+export async function runPipeline({ report, fixtureDir, emit, fix: tryFix = true, signal }) {
   const run = { id: 'run_' + Date.now().toString(36), reportId: report.id, startedAt: new Date().toISOString(), steps: [], verdict: 'running', sandbox: sandboxInfo };
   const step = (type, data) => { const s = { type, at: new Date().toISOString(), ...data }; run.steps.push(s); emit?.(s); return s; };
   // Normalise to LF: a Windows checkout or editor can turn the fixture into CRLF, and then exact find/replace
@@ -88,6 +94,7 @@ export async function runPipeline({ report, fixtureDir, emit, fix: tryFix = true
 
   step('evidence', { events: report.events.length, redactions: report.redactions, description: report.description, screenshot: !!report.screenshot });
 
+  cancelled(signal);
   // 0. Baseline: existing suite on original code (deterministic, no AI)
   let ws = createWorkspace(fixtureDir);
   const baseline = await runTestFile(ws, EXISTING);
@@ -100,6 +107,7 @@ export async function runPipeline({ report, fixtureDir, emit, fix: tryFix = true
   // 1. Reproduce: model writes test; we only accept it if it FAILS on current code with an assertion
   let repro = null, feedback = '';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && !repro; attempt++) {
+    cancelled(signal);
     step('model.start', { phase: 'reproduce', attempt });
     let ans;
     try { ans = await chatJson({ ...reproPrompt({ evidence: { description: report.description, env: report.env, events: report.events }, source, existingTests, feedback, hasScreenshot: !!report.screenshot }), schemaName: 'repro', schema: REPRO_SCHEMA, images: report.screenshot ? [report.screenshot] : [], temperature: retryTemp(attempt) }); }
@@ -143,6 +151,7 @@ export async function runPipeline({ report, fixtureDir, emit, fix: tryFix = true
   let fix = null;
   const facts = testFacts(repro.test_code, repro.result.output);
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && !fix; attempt++) {
+    cancelled(signal);
     step('model.start', { phase: 'fix', attempt });
     let ans;
     try { ans = await chatJson({ ...fixPrompt({ source, testCode: repro.test_code, failure: repro.result.output.slice(-2500), feedback, facts }), schemaName: 'fix', schema: FIX_SCHEMA, temperature: retryTemp(attempt) }); }

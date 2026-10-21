@@ -138,19 +138,26 @@ const server = http.createServer(async (req, res) => {
       if (!f || !fs.existsSync(f)) return send(res, 404, { error: 'report not found' });
       if (busy) return send(res, 409, { error: 'a run is already in progress' });
       busy = true;
+      // If the browser goes away mid-run (tab closed/refreshed), cancel at the next checkpoint so the
+      // single run slot is freed instead of returning 409 for minutes.
+      const ac = new AbortController();
+      res.on('close', () => { if (!res.writableFinished) ac.abort(); });
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-      const emit = (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`);
-      const ping = setInterval(() => res.write(': ping\n\n'), 10000);
+      const live = () => !res.destroyed && !res.writableEnded;
+      res.on('error', () => {}); // a vanished client must never crash the server
+      const emit = (ev) => { if (live()) res.write(`data: ${JSON.stringify(ev)}\n\n`); };
+      const ping = setInterval(() => { if (live()) res.write(': ping\n\n'); }, 10000);
       try {
         const report = JSON.parse(fs.readFileSync(f, 'utf8'));
         if (report.kind === 'github' && !REPO_CODE_ALLOWED) { emit({ type: 'fatal', error: REPO_MODE_OFF }); return; }
         const fix = !!getBotConfig().tryFix; // reproduce-only unless "Also try a fix" is switched on
         const run = report.kind === 'github'
-          ? await runRepoPipeline({ kase: report, reposDir: REPOS, emit, fix })
-          : await runPipeline({ report, fixtureDir: FIXTURE, emit, fix });
+          ? await runRepoPipeline({ kase: report, reposDir: REPOS, emit, fix, signal: ac.signal })
+          : await runPipeline({ report, fixtureDir: FIXTURE, emit, fix, signal: ac.signal });
         fs.writeFileSync(path.join(RUNS, run.id + '.json'), JSON.stringify(run, null, 2));
       } catch (e) {
-        emit({ type: 'fatal', error: e.message });
+        if (e.cancelled) console.log(`[redgreen] ${e.message} (report ${id})`);
+        else emit({ type: 'fatal', error: e.message });
       } finally { clearInterval(ping); busy = false; res.end(); }
       return;
     }
