@@ -1,0 +1,133 @@
+{
+  "schema": "redgreen.evidence/v1",
+  "app": "demo-shop",
+  "sample": true,
+  "description": "Total looked way too low after I changed the quantity, then checkout failed.",
+  "captured_at": "2026-10-21T04:09:50.177Z",
+  "env": {
+    "userAgent": "scripted-sample",
+    "url": "http://localhost:3000/shop/",
+    "viewport": "1280x800"
+  },
+  "events": [
+    {
+      "id": "e1",
+      "t_ms": 1037,
+      "type": "action",
+      "name": "addItem",
+      "args": [
+        {
+          "id": "hp",
+          "name": "Headphones",
+          "price": 50
+        },
+        1
+      ],
+      "stateAfter": {
+        "items": [
+          {
+            "id": "hp",
+            "qty": 1,
+            "price": 50
+          }
+        ],
+        "coupon": null,
+        "discount": 0,
+        "subtotal": 50,
+        "total": 50
+      }
+    },
+    {
+      "id": "e2",
+      "t_ms": 2211,
+      "type": "action",
+      "name": "setQuantity",
+      "args": [
+        "hp",
+        3
+      ],
+      "stateAfter": {
+        "items": [
+          {
+            "id": "hp",
+            "qty": 3,
+            "price": 50
+          }
+        ],
+        "coupon": null,
+        "discount": 0,
+        "subtotal": 150,
+        "total": 150
+      }
+    },
+    {
+      "id": "e3",
+      "t_ms": 3522,
+      "type": "action",
+      "name": "applyCoupon",
+      "args": [
+        "SAVE20"
+      ],
+      "stateAfter": {
+        "items": [
+          {
+            "id": "hp",
+            "qty": 3,
+            "price": 50
+          }
+        ],
+        "coupon": "SAVE20",
+        "discount": 30,
+        "subtotal": 150,
+        "total": 120
+      }
+    },
+    {
+      "id": "e4",
+      "t_ms": 4970,
+      "type": "action",
+      "name": "setQuantity",
+      "args": [
+        "hp",
+        1
+      ],
+      "stateAfter": {
+        "items": [
+          {
+            "id": "hp",
+            "qty": 1,
+            "price": 50
+          }
+        ],
+        "coupon": "SAVE20",
+        "discount": 30,
+        "subtotal": 50,
+        "total": 20
+      }
+    },
+    {
+      "id": "e5",
+      "t_ms": 7070,
+      "type": "network.failed",
+      "method": "POST",
+      "url": "http://localhost:3000/shop/api/checkout",
+      "status": 422,
+      "requestHeaders": {
+        "Content-Type": "application/json",
+        "Authorization": "[REDACTED]"
+      },
+      "requestBody": "{\"email\":\"[REDACTED_EMAIL]\",\"items\":[{\"id\":\"hp\",\"name\":\"Headphones\",\"price\":50,\"qty\":1}],\"coupon\":\"SAVE20\",\"clientTotal\":20}",
+      "responseBody": "{\"error\":\"Total mismatch: client sent $20.00, server computed $40.00\"}",
+      "duration_ms": 14
+    },
+    {
+      "id": "e6",
+      "t_ms": 7073,
+      "type": "console.error",
+      "message": "Checkout failed: Total mismatch: client sent $20.00, server computed $40.00"
+    }
+  ],
+  "id": "rpt_sample",
+  "redactions": 2,
+  "savedAt": "2000-01-01T00:00:00.000Z"
+}

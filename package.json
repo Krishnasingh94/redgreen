@@ -1,0 +1,16 @@
+{
+  "name": "redgreen",
+  "version": "0.1.0",
+  "description": "Bug report → failing test → verified fix, powered by local Gemma 4. Nothing is called fixed until a test goes red then green.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\"",
+    "smoke": "node scripts/smoke-model.js",
+    "reset": "node scripts/reset.js",
+    "sample": "node scripts/make-sample.js",
+    "check:sandbox": "node scripts/check-sandbox.js"
+  }
+}
