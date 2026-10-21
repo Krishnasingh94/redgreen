@@ -55,7 +55,7 @@ async function loadStatus() {
     const bb = $('#botBadge');
     if (s.bot?.enabled) {
       bb.hidden = false; bb.className = 'badge ' + (s.bot.current ? 'on' : '');
-      bb.innerHTML = s.bot.current ? `<i class="dot"></i><span>Bot working on <strong>${esc(s.bot.current.repo)}#${s.bot.current.number}</strong></span>` : `<i class="dot"></i><span>Bot watching ${s.bot.repos.map(esc).join(', ')}</span>`;
+      bb.innerHTML = s.bot.current ? `<i class="dot"></i><span>Bot working on <strong>${esc(s.bot.current.repo)}#${s.bot.current.number}</strong></span>` : `<i class="dot"></i><span>${s.bot.kind === 'app' ? `GitHub App live on ${s.bot.repos.length} ${s.bot.repos.length === 1 ? 'repo' : 'repos'}` : `Bot watching ${s.bot.repos.map(esc).join(', ')}`}</span>`;
       bb.title = `Label an issue "${s.bot.label}" or comment /redgreen`;
     } else bb.hidden = true;
   } catch { $('#modelBadge').className = 'badge down'; $('#modelBadge').innerHTML = '<i class="dot"></i><span>RedGreen server unreachable</span>'; }
@@ -315,8 +315,14 @@ async function showOutcome(runId, verdict) {
       <button class="btn" id="copyPr">Copy PR description</button>
       <a class="btn" href="/api/runs/${esc(runId)}/pr.md" download="redgreen-${esc(runId)}.md">Download report</a>
       ${v ? `<a class="btn" id="dlPatch" download="redgreen-${esc(runId)}.diff">Download patch</a>` : ''}
+      ${state.report.kind === 'github' ? `<button class="btn" id="postGh">Post result to the GitHub issue</button>` : ''}
     </div>
     <details><summary>Preview PR description</summary><pre>${esc(md)}</pre></details>`;
+  $('#postGh')?.addEventListener('click', async (e) => {
+    const btn = e.target; btn.disabled = true; btn.textContent = 'Posting';
+    const r = await fetch(`/api/bot/post/${runId}`, { method: 'POST' }); const j = await r.json();
+    if (r.ok) { btn.outerHTML = `<a class="btn" href="${esc(j.url)}" target="_blank" rel="noopener">Posted. View on GitHub</a>`; } else { btn.disabled = false; btn.textContent = 'Post result to the GitHub issue'; $('#notice').innerHTML = `<div class="notice err">${esc(j.error)}</div>`; }
+  });
   $('#copyPr').onclick = () => navigator.clipboard.writeText(md).then(() => { $('#copyPr').textContent = 'Copied'; });
   if (v) $('#dlPatch').href = URL.createObjectURL(new Blob([patch], { type: 'text/x-diff' }));
 }
@@ -351,6 +357,68 @@ function analyze(id) {
   es.onerror = () => { es.close(); running = false; clearInterval(tick); go.disabled = false; go.lastChild.textContent = 'Try again';
     $('#notice').innerHTML = '<div class="notice err">Lost the connection to the RedGreen server. Check the terminal running it, then try again.</div>'; };
 }
+
+/* ---------- GitHub bot page ---------- */
+async function botView() {
+  const b = await getJSON('/api/bot');
+  state = null;
+  const isApp = b.kind === 'app';
+  const installs = (b.installations || []);
+  const repoItems = isApp
+    ? (installs.map((r) => `<li><a href="https://github.com/${esc(r.repo)}/issues" target="_blank" rel="noopener"><code>${esc(r.repo)}</code></a><span class="hint">installed by @${esc(r.account || '')}</span></li>`).join('') || '<li class="empty">Not installed anywhere yet. Use the install button.</li>')
+    : ((b.repos || []).map((r) => `<li><a href="https://github.com/${esc(r)}/issues" target="_blank" rel="noopener"><code>${esc(r)}</code></a><button class="btn small" data-unwatch="${esc(r)}">Remove</button></li>`).join('') || '<li class="empty">No repos yet.</li>');
+  const act = (b.activity || []).map((a) => `<li><span class="at">${clock(a.at)}</span>${esc(a.msg)}</li>`).join('') || '<li class="empty">Nothing yet.</li>';
+  await swap(() => { $('#main').innerHTML = `
+  <section class="botpage">
+    <h1 class="bh">RedGreen for GitHub</h1>
+    <p class="lead">Install RedGreen on any repo, like any GitHub app. When an issue gets the <code>redgreen</code> label, or someone with write access comments <code>/redgreen</code>, RedGreen reproduces the bug and replies with the failing check, where to look, and a fix only if it verified one. It does not change code unless you allow it.</p>
+    ${!b.githubMode ? `<div class="notice err">${esc(b.error)}</div>` : ''}
+    ${isApp && b.enabled ? `<div class="installbar"><div><b>${esc(b.appName || 'RedGreen')}</b> is live as <code>@${esc(b.login)}</code>. Anyone can add it to their repos:</div><a class="go" href="${esc(b.installUrl)}" target="_blank" rel="noopener"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>Install RedGreen on a repo</a></div>` : ''}
+    <div class="botgrid">
+      <section class="sect"><h3>${isApp ? 'GitHub App' : '1. Set up the GitHub App'} ${b.enabled ? '<small class="ok">running</small>' : ''}</h3><div class="body">
+        ${isApp && b.enabled ? `<p>This computer is the worker: it checks every repo the app is installed on and does the red → green work with Gemma 4.</p><button class="btn" id="removeApp">Remove app credentials</button>`
+        : `<ol class="howto">
+            <li><a href="https://github.com/settings/apps/new" target="_blank" rel="noopener">Register a new GitHub App</a>. Any name, homepage = your repo.</li>
+            <li>Webhook: <b>untick “Active”</b>. RedGreen checks for work itself, so no server is needed.</li>
+            <li>Repository permissions: <b>Issues</b>, <b>Pull requests</b>, <b>Contents</b>: read and write.</li>
+            <li>“Where can this app be installed?”: <b>Any account</b>. Create it.</li>
+            <li>Copy the <b>App ID</b>, then <b>Generate a private key</b> (a .pem file downloads).</li>
+          </ol>
+          <form id="appForm" class="appform"><input id="appId" inputmode="numeric" placeholder="App ID" required><label class="file"><input id="appKey" type="file" accept=".pem" required><span>Choose .pem key</span></label><button type="submit" class="btn">Save</button></form>
+          <p class="hint">The key stays on this computer and is never shown again.</p>`}
+        <p class="gherr" id="appErr">${b.appConfigured && !b.enabled && b.error ? esc(b.error) : ''}</p></div></section>
+      <section class="sect"><h3>${isApp ? 'Installed on' : '2. Repos'}</h3><div class="body">
+        <ul class="repolist">${repoItems}</ul>
+        ${isApp ? '<p class="hint">New installs are picked up within 30 seconds.</p>' : `
+        <details ${b.kind === 'token' ? 'open' : ''}><summary>Or use a personal token instead of an app</summary>
+          ${b.kind === 'token' ? `<p>Connected as <b>@${esc(b.login)}</b>. <button class="btn small" id="disconnect">Disconnect</button></p>
+            <form id="repoForm" class="ghrow"><input id="repoIn" placeholder="owner/repo" required><button type="submit" class="btn">Add repo</button></form>`
+          : `<form id="tokForm" class="ghrow"><input id="tok" type="password" autocomplete="off" placeholder="github_pat_…" required><button type="submit" class="btn">Connect</button></form>`}
+          <p class="gherr" id="tokErr"></p></details>`}
+        <p class="hint">Contributing to someone else's project? Install RedGreen on your fork and comment <code>/redgreen https://github.com/owner/project/issues/42</code> on an issue there.</p></div></section>
+      <section class="sect"><h3>What RedGreen may do</h3><div class="body">
+        <label class="check"><input type="checkbox" id="openPrs" ${b.openPrs ? 'checked' : ''} ${b.enabled ? '' : 'disabled'}> Also open a pull request when a fix is verified</label>
+        <p class="hint">Off: it only comments. On: it also opens a PR, and only for fixes that went red → green.</p></div></section>
+      <section class="sect"><h3>Activity ${b.current ? `<small>working on ${esc(b.current.repo)}#${b.current.number}</small>` : ''}</h3><ul class="activity">${act}</ul></section>
+    </div>
+  </section>`; });
+  const post = (url, body, method = 'POST') => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }).then(async (r) => ({ ok: r.ok, j: await r.json() }));
+  $('#appForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault(); const f = $('#appKey').files[0]; if (!f) return;
+    const btn = e.target.querySelector('button'); btn.disabled = true; btn.textContent = 'Checking';
+    const { ok, j } = await post('/api/bot/app', { appId: $('#appId').value, privateKey: await f.text() });
+    btn.disabled = false; btn.textContent = 'Save';
+    if (!ok) $('#appErr').textContent = j.error; else { botView(); loadStatus(); }
+  });
+  $('#appKey')?.addEventListener('change', (e) => { e.target.nextElementSibling.textContent = e.target.files[0]?.name || 'Choose .pem key'; });
+  $('#removeApp')?.addEventListener('click', async () => { await post('/api/bot/app', null, 'DELETE'); botView(); loadStatus(); });
+  $('#tokForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const { ok, j } = await post('/api/bot/token', { token: $('#tok').value }); $('#tok').value = ''; if (!ok) $('#tokErr').textContent = j.error; else { botView(); loadStatus(); } });
+  $('#disconnect')?.addEventListener('click', async () => { await post('/api/bot/token', null, 'DELETE'); botView(); loadStatus(); });
+  $('#repoForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const { ok, j } = await post('/api/bot/repos', { repo: $('#repoIn').value }); if (!ok) $('#tokErr').textContent = j.error; else { botView(); loadStatus(); } });
+  $('#openPrs')?.addEventListener('change', (e) => post('/api/bot/settings', { openPrs: e.target.checked }));
+  document.querySelectorAll('[data-unwatch]').forEach((btn) => btn.addEventListener('click', async () => { const [o, r] = btn.dataset.unwatch.split('/'); await post(`/api/bot/repos/${o}/${r}`, null, 'DELETE'); botView(); loadStatus(); }));
+}
+document.addEventListener('click', (e) => { if (e.target.closest('#botLink') && !running) botView(); });
 
 /* ---------- follow bot runs live ---------- */
 let botCase = null;

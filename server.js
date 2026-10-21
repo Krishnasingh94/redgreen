@@ -7,7 +7,7 @@ import { redact } from './src/redact.js';
 import { runPipeline } from './src/pipeline.js';
 import { runRepoPipeline } from './src/repoPipeline.js';
 import { parseIssueUrl, fetchIssue } from './src/github.js';
-import { createBot } from './src/bot.js';
+import { createBot, envConfig } from './src/bot.js';
 import { status as modelStatus, modelConfig } from './src/model.js';
 import { sandboxInfo } from './src/sandbox.js';
 import { COUPONS } from './fixtures/shop/src/cart.js';
@@ -123,6 +123,7 @@ const server = http.createServer(async (req, res) => {
       if (m[2]) return send(res, 200, JSON.parse(fs.readFileSync(f, 'utf8')).prMarkdown || '# No verified result', 'text/markdown; charset=utf-8');
       return send(res, 200, fs.readFileSync(f, 'utf8'));
     }
+    if (p === '/api/bot' || p.startsWith('/api/bot/')) return botApi(req, res, p);
     if (p === '/api/live') {
       // Bot runs, streamed to any open dashboard so it can follow along live.
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
@@ -163,10 +164,10 @@ const server = http.createServer(async (req, res) => {
 // ---- shared helpers for the GitHub bot
 const liveClients = new Set();
 const broadcast = (ev) => { for (const c of liveClients) c.write(`data: ${JSON.stringify(ev)}\n\n`); };
-async function createCase(ref) {
+async function createCase(ref, token) {
   // ref = the repo we clone and push to; ref.upstream (optional) = where the issue text lives (fork workflow).
   const src = ref.upstream || ref;
-  const fetched = await fetchIssue(src);
+  const fetched = await fetchIssue(src, token);
   // Issue text is untrusted user content: redact it before it is stored or sent to the model.
   const { value: issue, count } = redact(fetched);
   const id = newId('gh');
@@ -175,20 +176,89 @@ async function createCase(ref) {
   fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
   return rec;
 }
-async function runCaseForBot(kase) {
+async function runCaseForBot(kase, token) {
   while (busy) await new Promise((r) => setTimeout(r, 2000)); // one run at a time, shared with the dashboard
   busy = true;
   try {
     broadcast({ type: 'bot.start', caseId: kase.id, repo: `${kase.repo.owner}/${kase.repo.repo}` });
-    const run = await runRepoPipeline({ kase, reposDir: REPOS, emit: (ev) => broadcast({ ...ev, caseId: kase.id }) });
+    const run = await runRepoPipeline({ kase, reposDir: REPOS, token, emit: (ev) => broadcast({ ...ev, caseId: kase.id }) });
     fs.writeFileSync(path.join(RUNS, run.id + '.json'), JSON.stringify(run, null, 2));
     return run;
   } finally { busy = false; }
 }
 const BOT_STATE = path.join(DATA, 'bot-state.json');
+// Bot settings are set from the website and kept ONLY on this machine (git-ignored). The token is never sent back to the browser.
+const BOT_CONFIG = path.join(DATA, 'bot-config.json');
+const readBotConfig = () => { try { return JSON.parse(fs.readFileSync(BOT_CONFIG, 'utf8')); } catch { return {}; } };
+const writeBotConfig = (c) => fs.writeFileSync(BOT_CONFIG, JSON.stringify(c, null, 2));
+const envAppKey = () => { try { return process.env.REDGREEN_APP_KEY_FILE ? fs.readFileSync(process.env.REDGREEN_APP_KEY_FILE, 'utf8') : ''; } catch { return ''; } };
+const getBotConfig = () => { const env = envConfig(), f = readBotConfig(); return { ...env, token: f.token || env.token, repos: f.repos ?? env.repos, openPrs: f.openPrs ?? env.openPrs, appId: f.appId || process.env.REDGREEN_APP_ID || '', privateKey: f.privateKey || envAppKey() }; };
 const bot = REPO_CODE_ALLOWED
-  ? createBot({ createCase, runCase: runCaseForBot, loadState: () => readJsonSafe(BOT_STATE), saveState: (st) => fs.writeFileSync(BOT_STATE, JSON.stringify(st, null, 2)) })
-  : { status: { enabled: false, error: 'The bot needs GitHub mode: start with npm run dev:github.' }, start() {} };
+  ? createBot({ createCase, runCase: runCaseForBot, getConfig: getBotConfig, loadState: () => (fs.existsSync(BOT_STATE) ? readJsonSafe(BOT_STATE) : null), saveState: (st) => fs.writeFileSync(BOT_STATE, JSON.stringify(st, null, 2)) })
+  : { status: { enabled: false, repos: [], activity: [], error: 'The bot needs GitHub mode: start RedGreen with npm run dev:github.' }, start() {} };
+
+async function botApi(req, res, p) {
+  const cfg = getBotConfig();
+  const view = () => { const c = getBotConfig(); return { ...bot.status, connected: !!(c.token || (c.appId && c.privateKey)), appConfigured: !!(c.appId && c.privateKey), repos: bot.status.kind === 'app' ? bot.status.repos : c.repos, openPrs: !!c.openPrs, githubMode: REPO_CODE_ALLOWED }; };
+  if (p === '/api/bot' && req.method === 'GET') return send(res, 200, view());
+  if (!REPO_CODE_ALLOWED) return send(res, 403, { error: REPO_MODE_OFF });
+  if (p === '/api/bot/token' && req.method === 'POST') {
+    const { token } = await readBody(req, 5000);
+    if (getBotConfig().appId) return send(res, 400, { error: 'This RedGreen runs as a GitHub App; remove the app first to use a personal token.' });
+    if (typeof token !== 'string' || token.trim().length < 20) return send(res, 400, { error: 'That does not look like a GitHub token.' });
+    const r = await fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${token.trim()}`, 'User-Agent': 'redgreen' } });
+    if (!r.ok) return send(res, 400, { error: `GitHub rejected the token (${r.status}).` });
+    writeBotConfig({ ...readBotConfig(), token: token.trim() });
+    await bot.start();
+    return send(res, 200, view());
+  }
+  if (p === '/api/bot/app' && req.method === 'POST') {
+    const { appId, privateKey } = await readBody(req, 20000);
+    if (!/^\d+$/.test(String(appId || '').trim())) return send(res, 400, { error: 'The App ID is a number, shown on the app\'s settings page.' });
+    if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(String(privateKey || ''))) return send(res, 400, { error: 'Choose the .pem private key file GitHub gave you.' });
+    try { const { createAppAuth } = await import('./src/githubApp.js'); await createAppAuth({ appId: String(appId).trim(), privateKey }).info(); }
+    catch (e) { return send(res, 400, { error: 'GitHub did not accept this App ID and key: ' + e.message.slice(0, 160) }); }
+    writeBotConfig({ ...readBotConfig(), appId: String(appId).trim(), privateKey });
+    await bot.start();
+    return send(res, 200, view());
+  }
+  if (p === '/api/bot/app' && req.method === 'DELETE') { const c = readBotConfig(); delete c.appId; delete c.privateKey; writeBotConfig(c); await bot.start(); return send(res, 200, view()); }
+  if (p === '/api/bot/token' && req.method === 'DELETE') { const c = readBotConfig(); delete c.token; writeBotConfig(c); await bot.start(); return send(res, 200, view()); }
+  if (p === '/api/bot/repos' && req.method === 'POST') {
+    const { repo } = await readBody(req, 2000);
+    const m = String(repo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$|\/$/g, '').match(/^([\w.-]+)\/([\w.-]+)$/);
+    if (!m) return send(res, 400, { error: 'Use the form owner/repo, e.g. samvit-srivastava/tiny-shop' });
+    const full = `${m[1]}/${m[2]}`;
+    if (!cfg.token) return send(res, 400, { error: 'Connect GitHub first.' });
+    const r = await fetch(`https://api.github.com/repos/${full}`, { headers: { Authorization: `Bearer ${cfg.token}`, 'User-Agent': 'redgreen' } });
+    if (!r.ok) return send(res, 400, { error: `Can't see ${full} with this token (${r.status}).` });
+    const info = await r.json();
+    if (!info.permissions?.push) return send(res, 400, { error: `Your token can read ${full} but can't comment there. Fork it and add your fork instead.` });
+    const repos = [...new Set([...(getBotConfig().repos || []), info.full_name])];
+    writeBotConfig({ ...readBotConfig(), repos });
+    return send(res, 200, view());
+  }
+  let mm;
+  if ((mm = p.match(/^\/api\/bot\/repos\/([\w.-]+)\/([\w.-]+)$/)) && req.method === 'DELETE') {
+    writeBotConfig({ ...readBotConfig(), repos: (getBotConfig().repos || []).filter((x) => x.toLowerCase() !== `${mm[1]}/${mm[2]}`.toLowerCase()) });
+    return send(res, 200, view());
+  }
+  if (p === '/api/bot/settings' && req.method === 'POST') { const { openPrs } = await readBody(req, 2000); writeBotConfig({ ...readBotConfig(), openPrs: !!openPrs }); return send(res, 200, view()); }
+  if ((mm = p.match(/^\/api\/bot\/post\/([\w]+)$/)) && req.method === 'POST') {
+    // Post a website run's result to its GitHub issue (same comment the bot writes).
+    const runF = path.join(RUNS, mm[1] + '.json');
+    if (!fs.existsSync(runF)) return send(res, 404, { error: 'run not found' });
+    if (!bot.status.enabled) return send(res, 400, { error: 'Connect GitHub on the Bot page first.' });
+    const run = JSON.parse(fs.readFileSync(runF, 'utf8'));
+    const kase = readJsonSafe(path.join(REPORTS, run.reportId + '.json'));
+    if (!kase || kase.kind !== 'github') return send(res, 400, { error: 'Only GitHub-issue runs can be posted.' });
+    const target = kase.upstream ? `${kase.repo.owner}/${kase.repo.repo}` : `${kase.repo.owner}/${kase.repo.repo}`;
+    try { await bot.postResult(target, kase.upstream ? kase.botIssue || kase.repo.number : kase.repo.number, kase, run); }
+    catch (e) { return send(res, 400, { error: e.message.slice(0, 300) }); }
+    return send(res, 200, { ok: true, url: `https://github.com/${target}/issues/${kase.repo.number}` });
+  }
+  return send(res, 404, { error: 'not found' });
+}
 
 server.listen(PORT, '127.0.0.1', () => {
   bot.start();

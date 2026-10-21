@@ -34,7 +34,7 @@ const FIX_SHAPE = 'Return ONE JSON object with: root_cause, change, explanation 
 const MAX_ATTEMPTS = 3;
 const temp = (a) => [0.2, 0.6, 0.9][a - 1] ?? 0.9;
 
-export async function runRepoPipeline({ kase, reposDir, emit }) {
+export async function runRepoPipeline({ kase, reposDir, emit, token }) {
   const run = { id: 'run_' + Date.now().toString(36), reportId: kase.id, kind: 'github', startedAt: new Date().toISOString(), steps: [], verdict: 'running', sandbox: { node: process.version, permissionModel: 'temp clone + timeout (third-party runners)', timeoutMs: 60000 } };
   const step = (type, data) => { const s = { type, at: new Date().toISOString(), ...data }; run.steps.push(s); emit?.(s); return s; };
   const fail = (verdict, reason) => { step('fatal', { error: reason }); run.verdict = verdict; return finish(run, emit); };
@@ -46,7 +46,7 @@ export async function runRepoPipeline({ kase, reposDir, emit }) {
   try {
     step('prepare', { stage: 'clone', note: `Cloning ${owner}/${repo}` });
     const t0 = Date.now();
-    if (fs.existsSync(path.join(dir, '.git'))) { await resetRepo(dir); sha = kase.repo.sha; } else sha = await cloneRepo(kase.repo, dir);
+    if (fs.existsSync(path.join(dir, '.git'))) { await resetRepo(dir); sha = kase.repo.sha; } else sha = await cloneRepo(kase.repo, dir, token);
     let projectErr = null;
     try { project = detectProject(dir); } catch (e) { projectErr = e; }
     site = detectSite(dir);
