@@ -16,3 +16,4 @@ data/bot-config.json
 *.pem
 data/reports/gh_*.json
 data/eval/
+data/model-config.json

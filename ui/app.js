@@ -45,11 +45,11 @@ async function loadStatus() {
     const b = $('#modelBadge');
     if (s.model.ok) {
       b.className = 'badge on';
-      b.innerHTML = `<i class="dot"></i><span><strong>${esc(prettyModel(s.model.model))}</strong> ${s.model.local ? 'running on this laptop' : 'on a remote endpoint'}</span>`;
+      b.innerHTML = `<i class="dot"></i><span><strong>${esc(prettyModel(s.model.model))}</strong> ${s.model.provider === 'gemini' ? 'via the Gemini API' : s.model.local ? 'running on this laptop' : 'on a remote endpoint'}</span>`;
       b.title = `${s.model.model} at ${s.model.baseUrl}`;
     } else {
       b.className = 'badge down';
-      b.innerHTML = `<i class="dot"></i><span>Model offline. Start the LM Studio server.</span>`;
+      b.innerHTML = `<i class="dot"></i><span>Model not connected. <a href="#/model">Open model settings</a></span>`;
       b.title = s.model.error;
     }
     const iso = s.sandbox.permissionModel.startsWith('--');
@@ -64,7 +64,7 @@ async function loadStatus() {
     lastStatus = s;
     const sys = $('#sysBtn');
     sys.className = 'sys ' + (s.model.ok ? 'on' : s.model.checking ? '' : 'down');
-    $('#sysTxt').textContent = s.model.ok ? `${prettyModel(s.model.model)} · ${s.model.local ? 'local' : 'remote'}` : s.model.checking ? 'Checking model' : 'Model offline';
+    $('#sysTxt').textContent = s.model.ok ? `${prettyModel(s.model.model)} · ${s.model.provider === 'gemini' ? 'Gemini API' : s.model.local ? 'local' : 'remote'}` : s.model.checking ? 'Checking model' : 'Model offline';
     statusReady();
   } catch {
     $('#sysBtn').className = 'sys down'; $('#sysTxt').textContent = 'Server unreachable'; statusReady(); $('#modelBadge').className = 'badge down'; $('#modelBadge').innerHTML = '<i class="dot"></i><span>RedGreen server unreachable</span>'; }
@@ -123,23 +123,53 @@ function setTab(name) { document.querySelectorAll('.tabs a').forEach((a) => a.cl
 
 function home() {
   setTab('home');
-  $('#main').innerHTML = `<section class="pg home2">
-    <div class="hero2">
-      <div class="h-copy">
-        <p class="kicker"><span class="lamps sm"><i class="l r"></i><i class="l g"></i></span>Bug reproduction for GitHub, powered by Gemma 4</p>
-        <h1><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
-        <p class="lede">Issues say “it's broken.” RedGreen answers with a check that fails on your code, and shows where to look.</p>
-        <div class="ctas"><a class="cta-main" href="#/reproduce">Reproduce an issue</a><a class="cta-alt" href="#/github">Add to GitHub</a></div>
+  $('#main').innerHTML = `<section class="home3">
+    <div class="h3-hero">
+      <div class="h3-copy">
+        <p class="kicker"><span class="lamps sm"><i class="l r"></i><i class="l g"></i></span>Bug reproduction for GitHub · Gemma 4</p>
+        <h1 class="h3-title"><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
+        <p class="lede">Issues say “it's broken.” RedGreen answers with a check that <em>fails on your code</em>, and shows where to look.</p>
+        <div class="ctas"><a class="cta-main magnet" href="#/reproduce">Reproduce an issue</a><a class="cta-alt magnet" href="#/github">Add to GitHub</a></div>
       </div>
-      ${replayCard()}
+      <div class="rig" aria-hidden="true">
+        <div class="housing">
+          <div class="bulb red"><span class="shock"></span><span class="shock s2"></span></div>
+          <div class="bulb green"><span class="q">?</span></div>
+        </div>
+        <div class="rig-labels"><span>fails on your code</span><span>lights only with proof</span></div>
+      </div>
     </div>
-    <div class="signal">
-      <div class="sig-step"><span class="sig-dot"></span><b>Find</b><p>Clone the repo, serve the site, locate the code the issue is about.</p></div>
-      <div class="sig-step red"><span class="sig-dot"></span><b>Reproduce</b><p>Gemma 4 reads the issue, the code and a screenshot, and writes a check. It must fail.</p></div>
-      <div class="sig-step green"><span class="sig-dot"></span><b>Point</b><p>The failing check, the real output, and where to look, posted on the issue.</p></div>
+
+    <div class="story">
+      <div class="story-vis"><div class="vis" id="vis" data-stage="1">
+        <div class="v-card v-issue"><div class="gh-head"><span class="state">Open</span><b>Cart total is wrong after changing quantity with a coupon applied</b></div><p>Expected <b>$40.00</b>, the total shows <b>$20.00</b>.</p><div class="cmt"><span class="who">samvit-srivastava</span> commented <code>/redgreen</code></div></div>
+        <div class="v-card v-find"><div class="v-row"><span class="spin"></span>Cloning <code>tiny-shop</code> · serving the site</div><div class="v-files"><code>app.js</code><code>index.html</code><code>style.css</code></div></div>
+        <div class="v-card v-gemma"><div class="v-row"><span class="gem"></span>Gemma 4 is reading the issue, the code and a screenshot</div><div class="v-shot"><i></i><i></i><i></i></div><div class="typing"><span></span><span></span><span></span></div></div>
+        <div class="v-card v-red"><div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div><h3><i class="dotred"></i>Reproduced</h3><pre class="mini"><span class="bad">✗ expect #total to show "$40.00"</span><span class="bad">   actual: "$20.00"</span></pre><p class="small">Where to look: <code>app.js</code> · <code>setQuantity()</code></p></div>
+      </div></div>
+      <div class="story-text">
+        <article data-step="1"><span class="sn3">01</span><h2>Someone opens an issue.</h2><p>“The total is wrong.” A maintainer comments <code>/redgreen</code>, or adds the <code>redgreen</code> label.</p></article>
+        <article data-step="2"><span class="sn3">02</span><h2>RedGreen finds the code.</h2><p>It clones the repo, serves the site or runs its tests, and picks the files the issue talks about with plain keyword search you can see.</p></article>
+        <article data-step="3"><span class="sn3">03</span><h2>Gemma 4 writes a check.</h2><p>It reads the issue, the code and a screenshot of the live page, then writes browser steps or a test. The issue is treated as data, never as instructions.</p></article>
+        <article data-step="4"><span class="sn3 red">04</span><h2>It has to fail. Or it doesn't count.</h2><p>RedGreen runs the check for real. Only a failure that matches the issue is accepted, and the proof is posted back: the steps, the real output, where to look.</p></article>
+      </div>
     </div>
-    <footer class="foot2"><span>Gemma 4 E4B · runs offline on a laptop GPU · never edits code by default</span><a href="https://github.com/samvit-srivastava/redgreen" target="_blank" rel="noopener">Open source on GitHub</a></footer>
+
+    <div class="final">
+      <div class="final-l"><h2>Put it on your repos.</h2><p>Install RedGreen as a GitHub app in two clicks. Run Gemma 4 on your own laptop, or bring a Gemini API key.</p></div>
+      <div class="final-r"><a class="cta-main magnet" href="#/github">Set up the GitHub app</a><a class="cta-alt magnet" href="#/model">Bring your own key</a></div>
+    </div>
+    <footer class="foot2"><span>Open source · Apache-2.0 · never edits code by default</span><a href="https://github.com/samvit-srivastava/redgreen" target="_blank" rel="noopener">github.com/samvit-srivastava/redgreen</a></footer>
   </section>`;
+  // scroll story: the pinned visual follows the step in view
+  const vis = $('#vis');
+  const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { vis.dataset.stage = e.target.dataset.step; document.querySelectorAll('.story-text article').forEach((a) => a.classList.toggle('on', a === e.target)); } }), { rootMargin: '-45% 0px -45% 0px' });
+  document.querySelectorAll('.story-text article').forEach((a) => io.observe(a));
+  // magnetic buttons
+  document.querySelectorAll('.magnet').forEach((b) => {
+    b.addEventListener('pointermove', (e) => { const r = b.getBoundingClientRect(); b.style.transform = `translate(${(e.clientX - r.left - r.width / 2) * 0.18}px, ${(e.clientY - r.top - r.height / 2) * 0.25}px)`; });
+    b.addEventListener('pointerleave', () => { b.style.transform = ''; });
+  });
 }
 
 function replayCard() {
@@ -176,6 +206,41 @@ function reproducePage() {
   </section>`;
   document.querySelectorAll('[data-sample]').forEach((b) => b.addEventListener('click', () => { $('#ghUrlIntro').value = b.dataset.sample; $('#ghUrlIntro').focus(); }));
   loadLists();
+}
+
+async function modelPage() {
+  setTab('');
+  const m = await getJSON('/api/model');
+  const st = m.status || {};
+  $('#main').innerHTML = `<section class="pg model2">
+    <h1 class="pg-h">Model</h1>
+    <p class="pg-sub">RedGreen uses Gemma 4. Run it on this computer with LM Studio, or bring your own Google AI Studio key to use Gemma 4 through the Gemini API (that's how a deployed RedGreen works).</p>
+    <div class="now ${st.ok ? 'ok' : 'bad'}"><i></i><span>${st.ok ? `Using <b>${esc(st.model)}</b> ${st.provider === 'gemini' ? 'through the Gemini API' : 'on this computer'}` : esc(st.error || 'Not connected')}</span></div>
+    <div class="choices">
+      <label class="choice ${m.provider === 'lmstudio' ? 'sel' : ''}"><input type="radio" name="prov" value="lmstudio" ${m.provider === 'lmstudio' ? 'checked' : ''}>
+        <b>On this computer</b><span>LM Studio with Gemma 4 loaded. Private and free; code never leaves the machine.</span>
+        <input id="baseUrl" class="field" value="${esc(m.baseUrl || 'http://localhost:1234/v1')}" aria-label="LM Studio server URL"></label>
+      <label class="choice ${m.provider === 'gemini' ? 'sel' : ''}"><input type="radio" name="prov" value="gemini" ${m.provider === 'gemini' ? 'checked' : ''}>
+        <b>Gemini API</b><span>Your own key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>. Stored only on this server, never shown again.</span>
+        <select id="gModel" class="field">${m.geminiModels.map((x) => `<option ${x === m.geminiModel ? 'selected' : ''}>${x}</option>`).join('')}</select>
+        <input id="gKey" class="field" type="password" autocomplete="off" placeholder="${m.hasGeminiKey ? 'Key saved. Paste a new one to replace it' : 'Paste your API key'}">
+        ${m.hasGeminiKey ? '<button type="button" class="btn small" id="rmKey">Remove saved key</button>' : ''}</label>
+    </div>
+    <button class="cta-main" id="saveModel" type="button">Save</button>
+    <p class="gherr" id="modelErr"></p>
+  </section>`;
+  document.querySelectorAll('input[name=prov]').forEach((r) => r.addEventListener('change', () => document.querySelectorAll('.choice').forEach((c) => c.classList.toggle('sel', c.contains(document.querySelector('input[name=prov]:checked'))))));
+  const save = async (extra = {}) => {
+    const btn = $('#saveModel'); btn.disabled = true; btn.textContent = 'Checking';
+    const body = { provider: document.querySelector('input[name=prov]:checked').value, geminiModel: $('#gModel').value, baseUrl: $('#baseUrl').value, ...extra };
+    if ($('#gKey').value) body.geminiKey = $('#gKey').value;
+    const r = await fetch('/api/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const j = await r.json();
+    btn.disabled = false; btn.textContent = 'Save';
+    if (!r.ok) { $('#modelErr').textContent = j.error; return; }
+    loadStatus(); modelPage();
+  };
+  $('#saveModel').addEventListener('click', () => save());
+  $('#rmKey')?.addEventListener('click', () => save({ removeKey: true }));
 }
 
 function historyPage() {
@@ -563,6 +628,7 @@ function route() {
   if ((m = h.match(/^#\/run\/(\w+)/))) return openRun(m[1], false);
   if (h.startsWith('#/reproduce')) return swap(reproducePage);
   if (h.startsWith('#/history')) return swap(historyPage);
+  if (h.startsWith('#/model')) return modelPage();
   if (h.startsWith('#/github') || h.startsWith('#bot')) {
     const err = h === '#bot-error';
     if (h.startsWith('#bot')) history.replaceState(null, '', '#/github');
@@ -571,6 +637,7 @@ function route() {
   return swap(home);
 }
 window.addEventListener('hashchange', route);
+window.addEventListener('pointermove', (e) => { document.body.style.setProperty('--mx', e.clientX + 'px'); document.body.style.setProperty('--my', e.clientY + 'px'); }, { passive: true });
 window.addEventListener('popstate', route);
 $('#sysBtn').addEventListener('click', () => { const p = $('#sysPop'); p.hidden = !p.hidden; $('#sysBtn').setAttribute('aria-expanded', String(!p.hidden)); });
 document.addEventListener('click', (e) => { if (!e.target.closest('.sys-wrap')) { $('#sysPop').hidden = true; $('#sysBtn').setAttribute('aria-expanded', 'false'); } });

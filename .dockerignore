@@ -1,0 +1,9 @@
+node_modules
+data/runs
+data/repos
+data/*.json
+.git
+.demo-repo
+.demo-site
+docs/context
+*.pem

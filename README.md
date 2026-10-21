@@ -39,6 +39,20 @@ RedGreen can watch your repos (or **your fork** of someone else's project) and a
 
 If the bug can't be reproduced it says so, and claims nothing. Set `REDGREEN_BOT_OPEN_PRS=1` to also open a PR for verified fixes (on a fork, with a one-click link to send it upstream). Open dashboards follow bot runs live.
 
+## Choose where Gemma 4 runs
+
+Open **Model settings** (top-right status pill):
+- **On this computer:** LM Studio with Gemma 4 E4B. Private and free; nothing leaves the machine.
+- **Gemini API:** bring your own key from [Google AI Studio](https://aistudio.google.com/apikey) and use `gemma-4-26b-a4b-it` or `gemma-4-31b-it`. The key is stored only on the server running RedGreen and is never shown again. This is how a deployed RedGreen works.
+
+## Deploy
+
+RedGreen clones repos, runs their tests and drives Chrome, so it needs a real server (Render, Railway, Fly.io, any VM), not a serverless host like Vercel.
+
+- `Dockerfile` (Playwright image with Chromium) and `render.yaml` are included. On Render: New → Blueprint → this repo.
+- Set `REDGREEN_PASSWORD` (protects the dashboard; anyone who can open it can make the server run repo code), `GEMINI_API_KEY` (or paste it on the Model page), and `PUBLIC_URL` (needed for one-click GitHub App creation).
+- Health check: `/healthz`.
+
 ## Why this is different
 
 | | Typical AI fix tools | RedGreen |

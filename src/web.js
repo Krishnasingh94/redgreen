@@ -52,7 +52,7 @@ let pw = null;
 export async function launchBrowser() {
   pw ??= await import('playwright-core').catch(() => null);
   if (!pw) throw new Error('Website mode needs playwright-core: run "npm install" in the RedGreen folder.');
-  const tries = [process.env.CHROME_PATH && { executablePath: process.env.CHROME_PATH }, { channel: 'chrome' }, { channel: 'msedge' }, fs.existsSync('/opt/pw-browsers/chromium') && { executablePath: '/opt/pw-browsers/chromium' }].filter(Boolean);
+  const tries = [process.env.CHROME_PATH && { executablePath: process.env.CHROME_PATH }, { channel: 'chrome' }, { channel: 'msedge' }, {}, fs.existsSync('/opt/pw-browsers/chromium') && { executablePath: '/opt/pw-browsers/chromium' }].filter(Boolean);
   let last;
   for (const opt of tries) { try { return await pw.chromium.launch({ headless: true, ...opt }); } catch (e) { last = e; } }
   throw new Error('No Chrome or Edge found for website mode. Install Chrome or set CHROME_PATH. ' + (last?.message || '').split('\n')[0]);
