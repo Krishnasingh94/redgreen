@@ -147,6 +147,7 @@ function home() {
 
     <div class="story s4">
       <div class="story-vis"><div class="vis" id="vis" data-stage="1">
+        <p class="ex-label"><i></i>Example: a real run on <a href="https://github.com/samvit-srivastava/tiny-shop/issues/1" target="_blank" rel="noopener">samvit-srivastava/tiny-shop#1</a></p>
         <div class="v-card v-issue"><div class="gh-head"><span class="state">Open</span><b>Cart total is wrong after changing quantity with a coupon applied</b></div><p>Expected <b>$40.00</b>, the total shows <b>$20.00</b>.</p><div class="cmt"><span class="who">samvit-srivastava</span> commented <code>/redgreen</code></div></div>
         <div class="v-card v-find"><div class="v-row"><span class="spin"></span>Cloned <code>tiny-shop</code>, serving the site</div><div class="v-files"><code>app.js</code><code>index.html</code><code>style.css</code></div></div>
         <div class="v-card v-gemma"><div class="v-row"><span class="gem"></span>Gemma 4 reads the page</div>

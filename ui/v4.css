@@ -1,5 +1,5 @@
 /* ===== v4: oscilloscope landing ===== */
-html,body{overflow-x:hidden}
+html,body{overflow-x:clip}
 body.on-home main{max-width:none;padding:0}
 .ticker{max-width:100vw}
 body.on-home::before{display:none}
@@ -45,12 +45,12 @@ body.on-home::before{display:none}
 
 /* split */
 .split{display:flex;min-height:78vh}
-.half{flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding:6vw 5vw;text-decoration:none;color:var(--ink);position:relative;overflow:hidden;transition:flex 0.7s cubic-bezier(.7,0,.2,1)}
+.half{container-type:inline-size;flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding:6vw 5vw;text-decoration:none;color:var(--ink);position:relative;overflow:hidden;transition:flex 0.7s cubic-bezier(.7,0,.2,1)}
 .half:hover{flex:1.8}
 .half.red{background:radial-gradient(700px 500px at 20% 20%,rgba(255,91,75,.35),transparent 70%),#140807}
 .half.green{background:radial-gradient(700px 500px at 80% 20%,rgba(47,214,124,.3),transparent 70%),#06130C}
 .half .k{position:absolute;top:30px;left:5vw;font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:rgba(255,255,255,.4)}
-.half b{font-size:clamp(52px,7.4vw,130px);line-height:.85;font-weight:900;font-stretch:125%;letter-spacing:-.04em}
+.half b{font-size:clamp(40px,17cqi,130px);line-height:.85;font-weight:900;font-stretch:125%;letter-spacing:-.04em}
 .half.red b{color:#FF5B4B;text-shadow:0 0 80px rgba(255,91,75,.4)}
 .half.green b{color:#2FD67C;text-shadow:0 0 80px rgba(47,214,124,.35)}
 .half p{font-size:18px;line-height:1.5;color:rgba(233,238,243,.75);max-width:34ch;margin:18px 0 22px}
@@ -82,3 +82,7 @@ body.on-home::before{display:none}
 .foot4{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;max-width:1180px;margin:110px auto 0;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);font-size:13px;color:var(--steel)}
 .foot4 a{color:var(--ink2)}
 @media (prefers-reduced-motion:reduce){.mega .ln::after{clip-path:none}.tag4,.scope-copy .ctas{opacity:1}.tk{animation:none}}
+
+.ex-label{display:inline-flex;align-items:center;gap:8px;margin:0 0 4px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--steel)}
+.ex-label i{width:7px;height:7px;border-radius:50%;background:var(--amber)}
+.ex-label a{color:var(--ink2)}
