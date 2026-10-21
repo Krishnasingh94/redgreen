@@ -8,13 +8,14 @@ const SKIP = /(^|\/)(node_modules|dist|build|coverage|\.git|vendor|examples?|doc
 const TESTY = /(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
 const STOP = new Set('this that with from when then have been should would could there their what which where expected actual returns return error issue bug function value values undefined null true false using used does into also after before while because only just like some more than other about would works working work fails failing broken wrong correct instead'.split(' '));
 
-export function listFiles(dir) {
+export const WEB_EXT = /\.(html?|css|m?js|cjs|jsx|ts|tsx|vue|svelte)$/;
+export function listFiles(dir, exts = SRC_EXT) {
   const out = [];
   (function walk(d, rel) {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       const r = rel ? rel + '/' + e.name : e.name;
       if (e.isDirectory()) { if (!SKIP.test(r + '/') && !e.name.startsWith('.')) walk(path.join(d, e.name), r); }
-      else if (SRC_EXT.test(e.name) && !e.name.endsWith('.d.ts') && !e.name.endsWith('.min.js')) out.push(r);
+      else if (exts.test(e.name) && !e.name.endsWith('.d.ts') && !e.name.endsWith('.min.js')) out.push(r);
     }
   })(dir, '');
   return out;
@@ -29,9 +30,9 @@ export function issueTerms(text) {
   return { idents: [...new Set(idents)], paths: [...new Set(paths)], words: [...new Set(words)] };
 }
 
-export function rankFiles(dir, issueText, limit = 4) {
+export function rankFiles(dir, issueText, limit = 4, exts = SRC_EXT) {
   const terms = issueTerms(issueText);
-  const files = listFiles(dir);
+  const files = listFiles(dir, exts);
   const scored = [];
   for (const f of files) {
     let src; try { src = fs.readFileSync(path.join(dir, f), 'utf8'); } catch { continue; }

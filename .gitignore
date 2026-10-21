@@ -7,3 +7,4 @@ data/reports/rpt_*.json
 data/repos/
 .demo-repo/
 !data/reports/rpt_sample_coupon.json
+.demo-site/

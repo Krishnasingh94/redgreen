@@ -2,15 +2,17 @@
 
 **Bug report → failing test → verified fix, on local Gemma 4. No proof, no fix.**
 
-AI coding tools are good at *saying* they fixed a bug. RedGreen doesn't let them say it until it's proven:
+AI coding tools are good at *saying* they fixed a bug. RedGreen won't let them until it's proven: a check must **fail on the current code** (🔴 RED), and after Gemma's patch the **same check must pass** with nothing else broken (🟢 GREEN). The verdict comes from real test runs, never from the model.
 
-1. A user hits a bug and clicks **Report bug**. A drop-in recorder attaches what actually happened: their action sequence and the state after each step, console errors, failed network requests, and an optional screenshot. Emails, tokens, auth headers and cookies are **redacted before anything is stored**.
-2. **Gemma 4 (running locally in LM Studio)** reads the evidence (and the screenshot, using Gemma 4's vision) plus the source code, and writes **one test that replays the user's steps**.
-3. RedGreen runs that test in a throwaway sandbox. It is only accepted if it **fails on the current code with an assertion error**. A test that passes, or crashes, is rejected and Gemma is told why. → 🔴 **RED: bug reproduced.**
-4. Gemma proposes a minimal patch by rewriting the whole function(s) that need to change. RedGreen swaps them in (only existing functions, brace-matched), applies it in a fresh sandbox and reruns **the same test and the existing suite**. → 🟢 **GREEN: fix verified.**
-5. You get a PR description built only from real artifacts: cited evidence, the reproduction test, the diff, and the real before/after test output.
+## Three ways in
 
-Everything runs on a laptop. With the default LM Studio endpoint, **no code or user data leaves the machine.**
+| Input | What RedGreen does | The proof |
+|---|---|---|
+| **A GitHub issue on a website** (plain HTML/CSS/JS, or any repo with `npm run dev` / `npm start`) | Clones the repo, serves the site, takes a screenshot, and **Gemma 4 reads the screenshot** plus the relevant HTML/CSS/JS. Gemma writes **browser steps as data** (click, type, expect text), which RedGreen runs in a real headless Chrome/Edge. | The steps fail on the live site, then pass after the patch. Before/after screenshots. |
+| **A GitHub issue on a JavaScript library** (node:test, Vitest, Jest or Mocha) | Clones the repo, installs deps with install scripts **disabled**, finds the relevant files by keyword search (shown on screen), and Gemma writes a test in the repo's own framework. | The new test fails, then passes; the repo's own `npm test` must not get worse. |
+| **A bug report from an instrumented app** (the demo shop) | A drop-in recorder captures the user's actions + state, failed requests and console errors, redacted before saving; optional screenshot. | The replayed test fails, then passes, inside a sandbox with Node's permission model. |
+
+Everything runs on a laptop with **Gemma 4 E4B in LM Studio**. Issue text, page content and evidence are treated as untrusted data in every prompt.
 
 ## Why this is different
 
@@ -38,8 +40,8 @@ Everything runs on a laptop. With the default LM Studio endpoint, **no code or u
    npm run smoke     # proves Gemma 4 is reachable and returns structured JSON
    npm start         # RedGreen on http://localhost:3000, demo shop on http://localhost:3000/shop/
    ```
-3. In the demo shop: add Headphones → set qty 3 → apply `SAVE20` → set qty 1 → Checkout (it fails) → **🐞 Report bug**.
-4. In RedGreen: open the report → **Reproduce & fix with Gemma 4**.
+3. **GitHub mode:** paste an issue URL (e.g. one from [tiny-shop](https://github.com/samvit-srivastava/tiny-shop/issues) or [tiny-cart](https://github.com/samvit-srivastava/tiny-cart/issues)) and press **Reproduce and fix**. Website mode needs Chrome or Edge installed (`npm install` adds `playwright-core`, no browser download).
+4. **Demo-shop mode:** add Headphones → set qty 3 → apply `SAVE20` → set qty 1 → Checkout (it fails) → **🐞 Report bug**, then open the report in RedGreen.
 
 Config (env vars): `GEMMA_BASE_URL` (default `http://localhost:1234/v1`), `GEMMA_MODEL` (default: auto-detects the loaded Gemma model), `GEMMA_API_KEY`, `GEMMA_TEMPERATURE`, `GEMMA_MAX_TOKENS`, `PORT`.
 
@@ -101,6 +103,10 @@ fixtures/shop/       synthetic demo app + recorder.js
 - RedGreen never claims a bug is reproduced or fixed unless the corresponding test run actually happened. The verdict comes from exit codes, not from the model.
 
 ## Limitations (honest)
+
+- GitHub mode supports public repos: websites (static, or with a `dev`/`start` script that prints a local URL) and JavaScript libraries with node:test, Vitest, Jest or Mocha. Other languages are not supported yet, and the app says so instead of guessing.
+- Gemma sees at most a few files chosen by keyword search; bugs that span many files are out of reach for a 4B-class local model.
+- Third-party test runners and dev servers run in a temporary clone with timeouts and a minimal environment, not the Node permission sandbox used in demo-shop mode. Browser steps are data, not code.
 
 - Today it targets JavaScript modules tested with `node:test`; the demo uses one fixture app.
 - Patches are limited to one file and ≤ 4 rewritten functions (exact find/replace edits, ≤ 6, are still accepted).

@@ -4,7 +4,9 @@
   "description": "Bug report → failing test → verified fix, powered by local Gemma 4. Nothing is called fixed until a test goes red then green.",
   "type": "module",
   "license": "Apache-2.0",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch-path=src --watch-path=server.js server.js",
@@ -14,5 +16,8 @@
     "sample": "node scripts/make-sample.js",
     "check:sandbox": "node scripts/check-sandbox.js",
     "eval": "node scripts/eval.js"
+  },
+  "dependencies": {
+    "playwright-core": "^1.64.1"
   }
 }

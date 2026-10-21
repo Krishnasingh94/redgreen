@@ -137,6 +137,7 @@ function shell(report, savedRun) {
   <div class="cols">
     <div>
       ${gh ? `<section class="sect"><h3>The issue <small>untrusted text, read as data</small></h3><div class="body issue">${esc(report.issue.body || '(no description)')}</div></section>
+      <section class="sect" id="pageSect" hidden><h3>The live page <small>Gemma 4 sees this screenshot</small></h3><div class="body shot"><img id="pageShot" alt="Screenshot of the site as cloned from GitHub"></div></section>
       <section class="sect"><h3>Files Gemma will read <small>chosen by keyword search, not AI</small></h3><ol class="files" id="files"><li class="empty">Found after the repo is cloned.</li></ol></section>` : `<section class="sect"><h3>What the user did <small>captured, private values removed</small></h3><ol class="tl" id="tl">${timeline(report)}</ol>
         ${report.screenshot ? `<div class="body shot"><p>Screenshot the user attached. Gemma 4 reads it.</p><img src="${report.screenshot}" alt="Screenshot attached to the bug report"></div>` : ''}</section>`}
       <section class="sect" id="hypSect" hidden><h3>Gemma's diagnosis</h3><div class="body hyp" id="hyp"></div></section>
@@ -190,7 +191,7 @@ function attempt(html) {
   $('#liveAtt')?.remove(); att.insertAdjacentHTML('beforeend', html);
   if (liveMode) att.lastElementChild.classList.add('enter');
 }
-const chip = (r) => `<span class="chip ${r.passed ? 'pass' : 'fail'}"><b>${r.passed ? 'PASS' : 'FAIL'}</b>${esc(r.file.replace('test/', ''))}, ${r.pass} passed, ${r.fail} failed</span>`;
+const chip = (r) => `<span class="chip ${r.passed ? 'pass' : 'fail'}"><b>${r.passed ? 'PASS' : 'FAIL'}</b>${esc(r.file.replace('test/', ''))}${r.file === 'browser steps' || r.file === 'repo tests' ? '' : `, ${r.pass} passed, ${r.fail} failed`}</span>`;
 const outBlock = (r, label = 'Test output') => `<details><summary>${label}</summary><pre>${esc(r.output.trim())}</pre></details>`;
 
 function render(s, live) {
@@ -200,6 +201,9 @@ function render(s, live) {
     case 'prepare':
       if (s.stage === 'ready') { stage(0, 'done', secs(s.durationMs || 0)); attempt(`<li><i class="mk info"></i><div><h4>Repo ready</h4><p class="sub">${esc(s.note)}${s.sha ? `, commit ${esc(s.sha)}` : ''}</p></div></li>`); }
       else { stage(0, 'now', s.stage === 'install' ? 'installing' : 'cloning'); attempt(`<li id="liveAtt"><i class="mk live"></i><div><h4>${esc(s.note)}</h4><p class="sub">${s.stage === 'install' ? 'npm, with install scripts turned off' : 'shallow clone from GitHub'}</p></div></li>`); }
+      break;
+    case 'page':
+      if ($('#pageSect')) { $('#pageSect').hidden = false; $('#pageShot').src = s.screenshot; if (live) $('#pageSect').classList.add('reveal'); }
       break;
     case 'located':
       $('#files').innerHTML = s.files.map((f, i) => `<li style="--i:${i}"><div class="fp"><code>${esc(f.path)}</code><span class="sc">${f.lines} lines</span></div><div class="tags">${f.terms.map((t) => `<span>${esc(t)}</span>`).join('')}</div></li>`).join('');
@@ -227,14 +231,16 @@ function render(s, live) {
       break;
     case 'repro.rejected':
       clearInterval(tick); addTime(2, s.durationMs || 0);
-      attempt(`<li><i class="mk warn"></i><div><h4>Test rejected</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs || 0)}</p><p class="why">${esc(s.reason)}</p>${s.result ? `<div class="res">${chip(s.result)}</div>` : ''}<details><summary>Gemma's test</summary>${codeBlock(s.proposal?.test_code)}</details></div></li>`);
+      attempt(`<li><i class="mk warn"></i><div><h4>Test rejected</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs || 0)}</p><p class="why">${esc(s.reason)}</p>${s.result ? `<div class="res">${chip(s.result)}</div>` : ''}<details><summary>${s.proposal?.steps ? "Gemma's browser steps" : "Gemma's test"}</summary>${proposalBody(s.proposal, s.result?.assertionFailure?.step)}</details></div></li>`);
       break;
     case 'repro.confirmed': {
       clearInterval(tick); addTime(2, s.durationMs || 0); stage(2, 'red');
-      const a = assertion(s.result.output);
+      const af = s.result.assertionFailure;
+      const a = af ? { expected: (s.proposal.steps?.[af.step - 1]?.value) || af.expected, actual: String(af.actual).replace(/^"|"$/g, '') } : assertion(s.result.output);
       setPanel('#pRed', 'red', 'Fails', a.expected ? `Expected <b>${esc(money(a.expected))}</b>, got <b>${esc(money(a.actual))}</b>. Bug reproduced.` : 'Bug reproduced by a failing test.', live);
-      attempt(`<li><i class="mk fail"></i><div><h4>Bug reproduced: the test fails on your code</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${chip(s.result)}</div>
-        <details open><summary>test/repro.test.js, written by Gemma</summary>${codeBlock(s.proposal.test_code)}</details>${outBlock(s.result, 'Failure output')}</div></li>`);
+      attempt(`<li><i class="mk fail"></i><div><h4>${s.proposal.steps ? 'Bug reproduced in a real browser' : 'Bug reproduced: the test fails on your code'}</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${chip(s.result)}</div>
+        <details open><summary>${s.proposal.steps ? 'Browser steps, written by Gemma and run by RedGreen' : 'Reproduction test, written by Gemma'}</summary>${proposalBody(s.proposal, af?.step)}</details>${outBlock(s.result, s.proposal.steps ? 'Browser run log' : 'Failure output')}</div></li>`);
+      if (s.result.screenshot && $('#pageShot')) { state.failShot = s.result.screenshot; }
       $('#hypSect').hidden = false;
       $('#hyp').innerHTML = `<p>${esc(s.proposal.hypothesis)}</p><dl class="ev"><dt>Expected</dt><dd class="exp">${esc(s.proposal.expected)}</dd><dt>Actual</dt><dd class="act">${esc(s.proposal.actual)}</dd><dt>Evidence</dt><dd>${(s.proposal.evidence_ids || []).map((x) => state.report.kind === 'github' ? `“${esc(x)}”` : esc(x)).join(', ') || 'none cited'}</dd></dl>`;
       if ($('#tl')) $('#tl').innerHTML = timeline(state.report, s.proposal.evidence_ids || []);
@@ -252,10 +258,12 @@ function render(s, live) {
       stage(4, 'green');
       const existing = s.results[1];
       $('#proof').classList.remove('flowing');
-      setPanel('#pGreen', 'green', 'Passes', `Same test passes. ${existing.note ? 'No new failures in the repo\'s tests.' : existing.pass ? `All ${existing.pass} existing tests still pass.` : 'The existing tests still pass.'}`, live);
+      const sameWhat = s.results[0].file === 'browser steps' ? 'Same browser check passes.' : 'Same test passes.';
+      setPanel('#pGreen', 'green', 'Passes', !existing ? `${sameWhat} This repo has no other tests to run.` : `${sameWhat} ${existing.note ? 'No new failures in the repo\'s tests.' : existing.pass ? `All ${existing.pass} existing tests still pass.` : 'The existing tests still pass.'}`, live);
       if (live) { const p = $('#proof'); p.classList.remove('celebrate'); void p.offsetWidth; p.classList.add('celebrate'); }
       attempt(`<li><i class="mk ok"></i><div><h4>Patch verified</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${s.results.map(chip).join('')}</div>${outBlock(s.results[0], 'Passing output')}</div></li>`);
       state.verified = s;
+      if (s.before && s.after) state.shots = { before: s.before, after: s.after };
       break; }
     case 'fatal':
       clearInterval(tick);
@@ -263,6 +271,15 @@ function render(s, live) {
       break;
   }
 }
+const stepText = (st) => {
+  const t = st.target ? `<code>${esc(st.target)}</code>` : '';
+  const v = st.value ? `<b>${esc(st.value)}</b>` : '';
+  return ({ goto: `Open ${v || 'the page'}`, click: `Click ${t}`, fill: `Type ${v} into ${t}`, select: `Choose ${v} in ${t}`, press: `Press ${v}`, wait: `Wait ${v} ms`,
+    expect_text: `Expect ${t || 'the page'} to show ${v}`, expect_value: `Expect ${t} to equal ${v}`, expect_visible: `Expect ${t} to be visible`, expect_hidden: `Expect ${t} to be hidden`,
+    expect_count: `Expect ${v} of ${t}`, expect_no_errors: 'Expect no JavaScript errors' })[st.action] || esc(st.action);
+};
+const stepsBlock = (steps, failedAt) => `<ol class="steps">${steps.map((st, i) => `<li class="${st.action.startsWith('expect') ? 'ex' : ''} ${failedAt === i + 1 ? 'bad' : ''}">${stepText(st)}</li>`).join('')}</ol>`;
+const proposalBody = (p, failedAt) => p?.steps ? stepsBlock(p.steps, failedAt) : codeBlock(p?.test_code);
 const money = (v) => /^-?\d+(\.\d+)?$/.test(v) ? '$' + Number(v).toFixed(2) : v;
 
 function finish(verdict, runId) {
@@ -285,6 +302,7 @@ async function showOutcome(runId, verdict) {
   $('#outTitle').textContent = v ? 'Verified fix' : 'Report for the maintainer';
   const patch = v ? `${v.diff}\n` : '';
   $('#out').innerHTML = `
+    ${state.shots ? `<div class="ba"><figure><img src="${state.shots.before}" alt="The page before the patch, with the bug"><figcaption><i class="pip red"></i>Before the patch</figcaption></figure><figure><img src="${state.shots.after}" alt="The page after the patch"><figcaption><i class="pip green"></i>After the patch</figcaption></figure></div>` : ''}
     ${v ? `<p class="change"><b>What changed:</b> ${esc(v.proposal.change || v.proposal.root_cause)}</p>${diffBlock(v.diff, true)}` : '<p>The bug is reproduced by a failing test, but no patch was verified. The report below includes the test so a person can take it from here.</p>'}
     <div class="actions" style="margin-top:12px">
       <button class="btn" id="copyPr">Copy PR description</button>
