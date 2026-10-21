@@ -9,7 +9,7 @@ import { runPipeline } from './src/pipeline.js';
 import { runRepoPipeline } from './src/repoPipeline.js';
 import { parseIssueUrl, fetchIssue } from './src/github.js';
 import { createBot, envConfig } from './src/bot.js';
-import { status as modelStatus, modelConfig } from './src/model.js';
+import { status as modelStatus, modelConfig, applyModelSettings, GEMINI_MODELS } from './src/model.js';
 import { sandboxInfo } from './src/sandbox.js';
 import { COUPONS } from './fixtures/shop/src/cart.js';
 
@@ -26,6 +26,7 @@ const REPO_CODE_ALLOWED = process.env.REDGREEN_ALLOW_REPO_CODE === '1' || proces
 const REPO_MODE_OFF = 'GitHub mode is off: it runs the repository\'s own code and tests on this machine, outside the RedGreen sandbox. Only enable it for repos you trust: restart with npm run dev:github (or REDGREEN_ALLOW_REPO_CODE=1).';
 fs.mkdirSync(REPORTS, { recursive: true }); fs.mkdirSync(RUNS, { recursive: true });
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '127.0.0.1';
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2', '.diff': 'text/x-diff; charset=utf-8' };
 
 const send = (res, code, body, type = 'application/json') => { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); };
@@ -53,6 +54,18 @@ const readJsonSafe = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')
 const listJson = (dir, valid) => fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => readJsonSafe(path.join(dir, f))).filter((o) => o && typeof o === 'object' && valid(o)).sort((a, b) => (b.savedAt || b.startedAt || '').localeCompare(a.savedAt || a.startedAt || ''));
 
 let busy = false;
+const MODEL_CFG = path.join(DATA, 'model-config.json');
+const readModelCfg = () => { try { return JSON.parse(fs.readFileSync(MODEL_CFG, 'utf8')); } catch { return {}; } };
+applyModelSettings(readModelCfg());
+// Optional access password for deployed instances (REDGREEN_PASSWORD). Local use stays open.
+const PASSWORD = process.env.REDGREEN_PASSWORD || '';
+function authorized(req) {
+  if (!PASSWORD) return true;
+  const h = req.headers.authorization || '';
+  if (!h.startsWith('Basic ')) return false;
+  const pass = Buffer.from(h.slice(6), 'base64').toString().split(':').slice(1).join(':');
+  return pass.length === PASSWORD.length && crypto.timingSafeEqual(Buffer.from(pass), Buffer.from(PASSWORD));
+}
 
 // Local-only API guard. The API can run code (GitHub mode, bot) and store credentials, so it must only be
 // driven by RedGreen's own pages, never by another website you happen to have open:
@@ -62,9 +75,12 @@ let busy = false;
 // Non-browser clients (scripts, tests) send neither header and are unaffected.
 // GitHub's redirect back to /api/bot/manifest is a cross-site top-level GET by design; it has its own state check.
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+// A deployed instance (PUBLIC_URL) is reached under its public host name; that one is allowed too.
+const PUBLIC_HOST = (() => { try { return process.env.PUBLIC_URL ? new URL(process.env.PUBLIC_URL).host.toLowerCase() : null; } catch { return null; } })();
 function requestGuard(req, p) {
   if (!p.startsWith('/api/') && !p.startsWith('/shop/api/')) return null;
-  if (!LOCAL_HOST.test(req.headers.host || '')) return 'host is not localhost';
+  const host = String(req.headers.host || '').toLowerCase();
+  if (!LOCAL_HOST.test(host) && host !== PUBLIC_HOST) return 'unexpected host';
   if (req.method === 'GET' && p === '/api/bot/manifest') return null;
   const site = req.headers['sec-fetch-site'];
   if (site && site !== 'same-origin' && site !== 'none') return `cross-site request (${site})`;
@@ -77,10 +93,12 @@ function requestGuard(req, p) {
 }
 
 const server = http.createServer(async (req, res) => {
+  if (req.url === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
+  if (!authorized(req)) { res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="RedGreen"', 'Content-Type': 'text/plain' }); return res.end('RedGreen: password required'); }
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
   const blocked = requestGuard(req, p);
-  if (blocked) return send(res, 403, { error: `Refused: ${blocked}. RedGreen's API only accepts requests from its own pages on localhost.` });
+  if (blocked) return send(res, 403, { error: `Refused: ${blocked}. RedGreen's API only accepts requests from its own pages.` });
   try {
     // ---- RedGreen UI
     if (p === '/' || p === '/index.html') return serveFile(res, path.join(ROOT, 'ui'), 'index.html');
@@ -149,6 +167,29 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, fs.readFileSync(f, 'utf8'));
     }
     if (p === '/api/bot' || p.startsWith('/api/bot/')) return botApi(req, res, p);
+    if (p === '/api/model' && req.method === 'GET') {
+      const c = readModelCfg();
+      return send(res, 200, { provider: modelConfig.provider, geminiModel: modelConfig.geminiModel, geminiModels: GEMINI_MODELS, hasGeminiKey: !!modelConfig.geminiKey, baseUrl: c.baseUrl || modelConfig.baseUrl, status: await modelStatus() });
+    }
+    if (p === '/api/model' && req.method === 'POST') {
+      const b = await readBody(req, 5000);
+      const c = readModelCfg();
+      if (b.provider === 'gemini' || b.provider === 'lmstudio') c.provider = b.provider;
+      if (typeof b.geminiKey === 'string' && b.geminiKey.trim()) {
+        const key = b.geminiKey.trim();
+        const model = GEMINI_MODELS.includes(b.geminiModel) ? b.geminiModel : (c.geminiModel || GEMINI_MODELS[0]);
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}`, { headers: { 'x-goog-api-key': key } }).catch(() => null);
+        if (!r || !r.ok) return send(res, 400, { error: `Google did not accept that key for ${model}${r ? ` (${r.status})` : ''}.` });
+        c.geminiKey = key;
+      }
+      if (b.removeKey) delete c.geminiKey;
+      if (GEMINI_MODELS.includes(b.geminiModel)) c.geminiModel = b.geminiModel;
+      if (typeof b.baseUrl === 'string' && /^https?:\/\//.test(b.baseUrl)) c.baseUrl = b.baseUrl;
+      fs.writeFileSync(MODEL_CFG, JSON.stringify(c, null, 2));
+      if (b.removeKey) modelConfig.geminiKey = process.env.GEMINI_API_KEY || '';
+      applyModelSettings(c);
+      return send(res, 200, { ok: true, status: await modelStatus() });
+    }
     if (p === '/api/live') {
       // Bot runs, streamed to any open dashboard so it can follow along live.
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
@@ -253,7 +294,7 @@ async function botApi(req, res, p) {
   }
   if (p === '/api/bot/manifest-form' && req.method === 'GET') {
     manifestState = { value: crypto.randomBytes(24).toString('hex'), exp: Date.now() + 10 * 60_000 };
-    const origin = `http://localhost:${PORT}`;
+    const origin = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
     const manifest = {
       name: `RedGreen ${Math.random().toString(36).slice(2, 6)}`,
       url: 'https://github.com/samvit-srivastava/redgreen',
@@ -324,10 +365,26 @@ async function botApi(req, res, p) {
   return send(res, 404, { error: 'not found' });
 }
 
-server.listen(PORT, '127.0.0.1', () => {
+let port = PORT, tries = 0;
+server.on('error', async (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  // Is it RedGreen already? Then just point the person at it instead of failing.
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/status`, { signal: AbortSignal.timeout(3000) });
+    const j = await r.json();
+    if (j && j.sandbox) { console.log(`\nRedGreen is already running → http://localhost:${port}\n(Open that link. To restart it, stop the other terminal first.)\n`); process.exit(0); }
+  } catch {}
+  if (++tries > 10) { console.error(`No free port found from ${PORT} to ${port}.`); process.exit(1); }
+  console.log(`Port ${port} is used by another app; trying ${port + 1}…`);
+  port += 1;
+  server.listen(port, HOST);
+});
+server.on('listening', () => {
   bot.start();
-  console.log(`RedGreen  → http://localhost:${PORT}`);
-  console.log(`Demo shop → http://localhost:${PORT}/shop/`);
+  console.log(`RedGreen  → http://localhost:${port}`);
+  console.log(`Demo shop → http://localhost:${port}/shop/`);
   console.log(`Model     → ${modelConfig.baseUrl} ${modelConfig.model ? '(' + modelConfig.model + ')' : '(auto-detect Gemma)'}`);
   console.log(`Sandbox   → Node ${sandboxInfo.node}, permission model: ${sandboxInfo.permissionModel}`);
+  console.log(`GitHub    → ${REPO_CODE_ALLOWED ? 'GitHub mode on' : 'GitHub mode off (npm run dev:github to enable)'}`);
 });
+server.listen(PORT, HOST);
