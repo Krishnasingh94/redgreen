@@ -71,7 +71,10 @@ export function maskPaths(output, workspace, win = process.platform === 'win32')
   return output.replace(re, '<sandbox>');
 }
 
-export function runTestFile(workspace, relFile, timeoutMs = sandboxInfo.timeoutMs) {
+export function runTestFile(givenWorkspace, relFile, timeoutMs = sandboxInfo.timeoutMs) {
+  // Always work on the real path: on Windows %TEMP% is often a short 8.3 path (C:\Users\RUNNER~1\...) and
+  // Node's module loader reads the long real path, which the permission model would then deny.
+  const workspace = fs.realpathSync.native(givenWorkspace);
   const file = path.join(workspace, relFile);
   const args = [];
   // READ_ARGS is the read-allow form probed at startup (a plain directory grant first: it covers everything
@@ -90,7 +93,7 @@ export function runTestFile(workspace, relFile, timeoutMs = sandboxInfo.timeoutM
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); out += `\n[redgreen] killed after ${timeoutMs}ms timeout`; }, timeoutMs);
     child.on('close', (code, signal) => {
       clearTimeout(timer);
-      const output = maskPaths(out, workspace);
+      const output = maskPaths(workspace === givenWorkspace ? out : maskPaths(out, givenWorkspace), workspace);
       const pass = Number(output.match(/ℹ pass (\d+)|# pass (\d+)/)?.slice(1).find(Boolean) ?? 0);
       const fail = Number(output.match(/ℹ fail (\d+)|# fail (\d+)/)?.slice(1).find(Boolean) ?? 0);
       const assertion = /AssertionError|ERR_ASSERTION/.test(output);

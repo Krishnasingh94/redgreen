@@ -24,7 +24,8 @@ function firstExisting(...ps) { return ps.find((p) => fs.existsSync(p)); }
 const ENV = () => ({ ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, TEMP: process.env.TEMP, TMP: process.env.TMP, APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, USERPROFILE: process.env.USERPROFILE, ComSpec: process.env.ComSpec } : { PATH: process.env.PATH, HOME: process.env.HOME }), CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', NODE_ENV: 'test' });
 
 // Run ONE test file with the repo's runner. No shell; timeout; minimal env.
-export async function runOne(dir, project, rel, timeoutMs = 60000) {
+export async function runOne(givenDir, project, rel, timeoutMs = 60000) {
+  const dir = fs.realpathSync.native(givenDir); // real path for cwd + permission flags (Windows short 8.3 temp paths)
   let args;
   switch (project.runner) {
     case 'vitest': { const v = firstExisting(bin(dir, 'vitest', 'vitest.mjs')); if (!v) throw new Error('vitest is not installed in the repo'); args = [v, 'run', rel]; break; }
@@ -32,7 +33,7 @@ export async function runOne(dir, project, rel, timeoutMs = 60000) {
     case 'mocha': { const m = firstExisting(bin(dir, 'mocha', 'bin', 'mocha.js'), bin(dir, 'mocha', 'bin', 'mocha')); if (!m) throw new Error('mocha is not installed in the repo'); args = [m, rel]; break; }
     // node:test: run the file in-process under the permission model (read-only repo dir, no writes, no
     // child processes). Not `--test`, which would spawn a child process and need --allow-child-process.
-    default: args = [...permissionArgs(fs.realpathSync.native(dir)), '--test-reporter=spec', rel];
+    default: args = [...permissionArgs(dir), '--test-reporter=spec', rel];
   }
   const t0 = Date.now();
   const r = await run(process.execPath, args, { cwd: dir, timeoutMs, env: ENV() });
@@ -112,6 +113,9 @@ export function applyRepoPatch(dir, allowedFiles, functions) {
     if (!allowedFiles.includes(file)) throw new Error(`change ${i + 1}: "${file}" is not one of the files shown to you (${allowedFiles.join(', ')})`);
     let code = String(f.code || '').replace(/^\s*```(?:[jt]sx?|javascript|typescript)?\s*\n?|```\s*$/g, '');
     let src = changed.get(file) ?? fs.readFileSync(path.join(dir, file), 'utf8');
+    // Keep the file's own line endings (a Windows checkout with core.autocrlf=true is CRLF; the model writes LF),
+    // so the patch doesn't leave mixed endings or turn the diff into noise.
+    if (/\r\n/.test(src)) code = code.replace(/\r?\n/g, '\r\n');
     if (f.name === '*' ) {
       if (src.split('\n').length > 200) throw new Error(`"${file}" is too large to rewrite whole; change individual functions instead`);
       if (code.trim() === src.trim()) continue;
