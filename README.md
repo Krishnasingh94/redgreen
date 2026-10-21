@@ -28,9 +28,16 @@ RedGreen can watch your repos (or **your fork** of someone else's project) and a
    npm run dev:github
    ```
 3. On a watched repo, add the label **`redgreen`** to an issue, or comment **`/redgreen`**. Only people with write access can trigger it, because it runs the repo's code on your machine.
-4. **Fork workflow (Hacktoberfest):** in your fork, comment `/redgreen https://github.com/upstream/project/issues/42`. RedGreen reads the upstream issue, reproduces and fixes it on your fork, opens a PR there titled `Fix upstream/project#42`, and comments a one-click link to send that PR upstream. It never posts on projects you don't control.
+4. **Fork workflow (Hacktoberfest):** in your fork, comment `/redgreen https://github.com/upstream/project/issues/42`. RedGreen reads the upstream issue and reproduces it against your fork's code. With PRs turned on, it opens a PR on your fork titled `Fix upstream/project#42` plus a one-click link to send it upstream. It never posts on projects you don't control.
 
-The bot comments when it starts, opens a PR **only when the fix is verified red → green**, and otherwise comments what it could reproduce so a human can take over. Open dashboards follow bot runs live.
+**Hosting:** RedGreen runs where the model and a browser can run: your laptop, or any machine with LM Studio. Serverless hosts like Vercel can't clone repos, run test suites or drive Chrome for minutes at a time. The planned hosted version is a GitHub Action that runs on GitHub's own runners and calls Gemma 4 through the Gemini API.
+
+**By default the bot never changes your code.** It replies on the issue with:
+- 🔴 **Reproduced**: the failing test or browser steps, with the real output (e.g. expected `$40.00`, got `$20.00`).
+- 🔍 **Where to look**: the files involved and the likely cause.
+- 🟢 **Suggested fix (verified)**: a diff, shown only if RedGreen ran it and the failing check then passed with the repo's own tests still green. Otherwise it says there is no verified fix yet.
+
+If the bug can't be reproduced it says so, and claims nothing. Set `REDGREEN_BOT_OPEN_PRS=1` to also open a PR for verified fixes (on a fork, with a one-click link to send it upstream). Open dashboards follow bot runs live.
 
 ## Why this is different
 
