@@ -4,3 +4,5 @@ data/reports/rpt_*.json
 !data/reports/rpt_sample.json
 .env
 *.log
+data/repos/
+.demo-repo/

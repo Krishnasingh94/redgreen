@@ -30,7 +30,10 @@ const diffBlock = (d, live) => { let n = 0; return `<pre class="diff${live ? ' l
   if (l.startsWith('-')) return `<span class="del" ${i}>${esc(l)}</span>`;
   return `<span>${esc(l)}</span>`;
 }).join('')}</code></pre>`; };
-const assertion = (out = '') => ({ actual: out.match(/actual:\s*([^\n,]+)/)?.[1]?.trim(), expected: out.match(/expected:\s*([^\n,]+)/)?.[1]?.trim() });
+const assertion = (out = '') => ({
+  actual: (out.match(/actual:\s*([^\n,]+)/) || out.match(/Received:\s*([^\n]+)/))?.[1]?.trim(),
+  expected: (out.match(/expected:\s*([^\n,]+)/) || out.match(/Expected:\s*([^\n]+)/))?.[1]?.trim(),
+});
 
 /* ---------- status badges ---------- */
 async function loadStatus() {
@@ -65,7 +68,7 @@ const VERDICT = {
 async function loadLists() {
   const [reports, runs] = await Promise.all([getJSON('/api/reports'), getJSON('/api/runs')]);
   $('#reports').innerHTML = reports.length ? reports.map((r) => `<li><button data-report="${esc(r.id)}" aria-current="${state?.report?.id === r.id && !state.savedRun}">
-      <i class="pip ink"></i><span><span class="t">${esc(r.description)}</span><span class="m">${r.sample ? 'Scripted sample' : clock(r.savedAt)}, ${r.events} events${r.screenshot ? ', screenshot' : ''}</span></span></button></li>`).join('')
+      <i class="pip ${r.kind === 'github' ? 'gh' : 'ink'}"></i><span><span class="t">${esc(r.description)}</span><span class="m">${r.kind === 'github' ? esc(r.repo) : `${r.sample ? 'Scripted sample' : clock(r.savedAt)}, ${r.events} events${r.screenshot ? ', screenshot' : ''}`}</span></span></button></li>`).join('')
     : '<li class="empty">No reports yet. Use the demo shop and press “Report bug”.</li>';
   $('#runs').innerHTML = runs.length ? runs.slice(0, 12).map((r) => `<li><button data-run="${esc(r.id)}" aria-current="${state?.savedRun === r.id}">
       <i class="pip ${VERDICT[r.verdict]?.pip || ''}"></i><span><span class="t">${VERDICT[r.verdict]?.text || esc(r.verdict)}</span><span class="m">${clock(r.startedAt)}</span></span></button></li>`).join('')
@@ -77,25 +80,49 @@ document.addEventListener('click', (e) => {
   const run = e.target.closest('[data-run]'); if (run) return openRun(run.dataset.run);
 });
 
+/* ---------- GitHub issues ---------- */
+async function loadIssue(form) {
+  const input = form.querySelector('input'), err = form.querySelector('.gherr'), btn = form.querySelector('button');
+  err.textContent = ''; btn.disabled = true; btn.textContent = 'Loading';
+  try {
+    const r = await fetch('/api/issues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: input.value }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error);
+    input.value = '';
+    await openReport(j.id);
+  } catch (e) { err.textContent = e.message; }
+  finally { btn.disabled = false; btn.textContent = form.id === 'ghSide' ? 'Load' : 'Load issue'; }
+}
+document.addEventListener('submit', (e) => { const f = e.target.closest('.ghform'); if (f) { e.preventDefault(); if (!running) loadIssue(f); } });
+
 /* ---------- views ---------- */
 function intro() {
   $('#main').innerHTML = `<section class="intro">
     <h1><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
-    <p>RedGreen turns a user's bug report into a test that fails on your code, asks Gemma 4 on this laptop for a patch, and calls it fixed only when that same test passes and nothing else breaks.</p>
+    <p>RedGreen turns a bug report into a test that fails on your code, asks Gemma 4 on this laptop for a patch, and calls it fixed only when that same test passes and nothing else breaks.</p>
+    <form class="ghform big" id="ghIntro">
+      <label for="ghUrlIntro">Paste a GitHub issue from a JavaScript repo</label>
+      <div class="ghrow"><input id="ghUrlIntro" type="url" placeholder="https://github.com/owner/repo/issues/1" required><button type="submit">Load issue</button></div>
+      <p class="gherr" role="alert"></p>
+    </form>
     <ol class="how">
-      <li><b>Capture</b><span>The app records what the user did, what broke, and what the server said. Private values are removed first.</span></li>
-      <li><b>Reproduce</b><span>Gemma writes a test from that evidence. It counts only if it fails on the current code.</span></li>
-      <li><b>Prove</b><span>Gemma patches the code. The same test plus your existing tests must pass, in a sealed sandbox.</span></li>
+      <li><b>Find</b><span>From a GitHub issue, RedGreen clones the repo and finds the code it talks about. From the demo app, it captures what the user did, with private values removed.</span></li>
+      <li><b>Reproduce</b><span>Gemma writes a test in the repo's own framework. It counts only if it fails on the current code.</span></li>
+      <li><b>Prove</b><span>Gemma patches the code. The same test and the repo's own tests must pass before anything is called fixed.</span></li>
     </ol></section>`;
 }
 
 function shell(report, savedRun) {
   state = { report, savedRun, stages: {}, live: null, steps: [] };
+  const gh = report.kind === 'github';
   const when = report.sample ? 'Scripted sample' : `Reported at ${clock(report.savedAt)}`;
+  const metaLine = gh
+    ? `<a href="${esc(report.issue.url)}" target="_blank" rel="noopener">${esc(report.repo.owner)}/${esc(report.repo.repo)} issue #${report.repo.number}</a>, opened by ${esc(report.issue.author || 'unknown')}. Loaded at ${clock(report.savedAt)}.${savedRun ? ` Showing a saved run from ${clock(savedRun.startedAt)}.` : ''}`
+    : null;
   $('#main').innerHTML = `
   <div class="rhead">
     <div><p class="quote">${esc(report.description)}</p>
-      <p class="rmeta">${when} with ${report.events.length} captured events${report.screenshot ? ' and a screenshot' : ''}. ${report.redactions} private ${report.redactions === 1 ? 'value' : 'values'} removed before saving.${savedRun ? ` Showing a saved run from ${clock(savedRun.startedAt)}.` : ''}</p></div>
+      <p class="rmeta">${gh ? metaLine : `${when} with ${report.events.length} captured events${report.screenshot ? ' and a screenshot' : ''}. ${report.redactions} private ${report.redactions === 1 ? 'value' : 'values'} removed before saving.${savedRun ? ` Showing a saved run from ${clock(savedRun.startedAt)}.` : ''}`}</p></div>
     ${savedRun ? `<button class="go" id="go" data-again="1">Run again</button>` : `<button class="go" id="go"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>Reproduce and fix</button>`}
   </div>
   <div id="notice"></div>
@@ -105,12 +132,13 @@ function shell(report, savedRun) {
     <div class="side-p" id="pGreen"><div class="lamp"></div><div class="cap">After Gemma's patch</div><div class="verdictword">Waiting</div><div class="fact">The same test must pass here.</div></div>
   </section>
   <ol class="track" id="track">
-    ${['Evidence', 'Existing tests', 'Reproduce', 'Patch', 'Verify'].map((l, i) => `<li data-k="${i}"><span class="n">${i + 1}</span><span class="lbl">${l}</span><span class="tm">&nbsp;</span></li>`).join('')}
+    ${[gh ? 'Clone and search' : 'Evidence', gh ? 'Repo tests' : 'Existing tests', 'Reproduce', 'Patch', 'Verify'].map((l, i) => `<li data-k="${i}"><span class="n">${i + 1}</span><span class="lbl">${l}</span><span class="tm">&nbsp;</span></li>`).join('')}
   </ol>
   <div class="cols">
     <div>
-      <section class="sect"><h3>What the user did <small>captured, private values removed</small></h3><ol class="tl" id="tl">${timeline(report)}</ol>
-        ${report.screenshot ? `<div class="body shot"><p>Screenshot the user attached. Gemma 4 reads it.</p><img src="${report.screenshot}" alt="Screenshot attached to the bug report"></div>` : ''}</section>
+      ${gh ? `<section class="sect"><h3>The issue <small>untrusted text, read as data</small></h3><div class="body issue">${esc(report.issue.body || '(no description)')}</div></section>
+      <section class="sect"><h3>Files Gemma will read <small>chosen by keyword search, not AI</small></h3><ol class="files" id="files"><li class="empty">Found after the repo is cloned.</li></ol></section>` : `<section class="sect"><h3>What the user did <small>captured, private values removed</small></h3><ol class="tl" id="tl">${timeline(report)}</ol>
+        ${report.screenshot ? `<div class="body shot"><p>Screenshot the user attached. Gemma 4 reads it.</p><img src="${report.screenshot}" alt="Screenshot attached to the bug report"></div>` : ''}</section>`}
       <section class="sect" id="hypSect" hidden><h3>Gemma's diagnosis</h3><div class="body hyp" id="hyp"></div></section>
     </div>
     <div>
@@ -169,9 +197,17 @@ function render(s, live) {
   liveMode = live;
   switch (s.type) {
     case 'evidence': stage(0, 'done', 'ready'); break;
+    case 'prepare':
+      if (s.stage === 'ready') { stage(0, 'done', secs(s.durationMs || 0)); attempt(`<li><i class="mk info"></i><div><h4>Repo ready</h4><p class="sub">${esc(s.note)}${s.sha ? `, commit ${esc(s.sha)}` : ''}</p></div></li>`); }
+      else { stage(0, 'now', s.stage === 'install' ? 'installing' : 'cloning'); attempt(`<li id="liveAtt"><i class="mk live"></i><div><h4>${esc(s.note)}</h4><p class="sub">${s.stage === 'install' ? 'npm, with install scripts turned off' : 'shallow clone from GitHub'}</p></div></li>`); }
+      break;
+    case 'located':
+      $('#files').innerHTML = s.files.map((f, i) => `<li style="--i:${i}"><div class="fp"><code>${esc(f.path)}</code><span class="sc">${f.lines} lines</span></div><div class="tags">${f.terms.map((t) => `<span>${esc(t)}</span>`).join('')}</div></li>`).join('');
+      if (live) $('#files').classList.add('live');
+      break;
     case 'baseline':
       stage(1, s.result.passed ? 'done' : 'red', secs(s.result.durationMs));
-      attempt(`<li><i class="mk ${s.result.passed ? 'info' : 'fail'}"></i><div><h4>${s.result.passed ? `Your ${s.result.pass} existing tests pass` : 'Your existing tests already fail'}</h4>
+      attempt(`<li><i class="mk ${s.result.passed ? 'info' : 'fail'}"></i><div><h4>${s.result.passed ? (s.result.pass ? `${state.report.kind === 'github' ? 'The repo\'s' : 'Your'} ${s.result.pass} existing tests pass` : 'The existing tests pass') : 'The existing tests already fail'}</h4>
         <p class="sub">${s.result.passed ? 'So they do not catch this bug.' : 'Fix those first; results below may be unreliable.'}</p><div class="res">${chip(s.result)}</div>${outBlock(s.result)}</div></li>`);
       break;
     case 'model.start': {
@@ -200,9 +236,9 @@ function render(s, live) {
       attempt(`<li><i class="mk fail"></i><div><h4>Bug reproduced: the test fails on your code</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${chip(s.result)}</div>
         <details open><summary>test/repro.test.js, written by Gemma</summary>${codeBlock(s.proposal.test_code)}</details>${outBlock(s.result, 'Failure output')}</div></li>`);
       $('#hypSect').hidden = false;
-      $('#hyp').innerHTML = `<p>${esc(s.proposal.hypothesis)}</p><dl class="ev"><dt>Expected</dt><dd class="exp">${esc(s.proposal.expected)}</dd><dt>Actual</dt><dd class="act">${esc(s.proposal.actual)}</dd><dt>Evidence</dt><dd>${(s.proposal.evidence_ids || []).map(esc).join(', ') || 'none cited'}</dd></dl>`;
-      $('#tl').innerHTML = timeline(state.report, s.proposal.evidence_ids || []);
-      if (live) { $('#tl').classList.add('live'); [...$('#tl').querySelectorAll('li.cited')].forEach((li, i) => li.style.setProperty('--i', i)); }
+      $('#hyp').innerHTML = `<p>${esc(s.proposal.hypothesis)}</p><dl class="ev"><dt>Expected</dt><dd class="exp">${esc(s.proposal.expected)}</dd><dt>Actual</dt><dd class="act">${esc(s.proposal.actual)}</dd><dt>Evidence</dt><dd>${(s.proposal.evidence_ids || []).map((x) => state.report.kind === 'github' ? `“${esc(x)}”` : esc(x)).join(', ') || 'none cited'}</dd></dl>`;
+      if ($('#tl')) $('#tl').innerHTML = timeline(state.report, s.proposal.evidence_ids || []);
+      if (live && $('#tl')) { $('#tl').classList.add('live'); [...$('#tl').querySelectorAll('li.cited')].forEach((li, i) => li.style.setProperty('--i', i)); }
       if (live) $('#hypSect').classList.add('reveal');
       break; }
     case 'fix.rejected':
@@ -216,14 +252,14 @@ function render(s, live) {
       stage(4, 'green');
       const existing = s.results[1];
       $('#proof').classList.remove('flowing');
-      setPanel('#pGreen', 'green', 'Passes', `Same test passes. All ${existing.pass} existing tests still pass.`, live);
+      setPanel('#pGreen', 'green', 'Passes', `Same test passes. ${existing.note ? 'No new failures in the repo\'s tests.' : existing.pass ? `All ${existing.pass} existing tests still pass.` : 'The existing tests still pass.'}`, live);
       if (live) { const p = $('#proof'); p.classList.remove('celebrate'); void p.offsetWidth; p.classList.add('celebrate'); }
       attempt(`<li><i class="mk ok"></i><div><h4>Patch verified</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${s.results.map(chip).join('')}</div>${outBlock(s.results[0], 'Passing output')}</div></li>`);
       state.verified = s;
       break; }
     case 'fatal':
       clearInterval(tick);
-      $('#notice').innerHTML = `<div class="notice err">The run stopped: ${esc(s.error)}</div>`;
+      $('#notice').innerHTML = `<div class="notice err">${esc(s.error)}</div>`;
       break;
   }
 }

@@ -5,6 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { redact } from './src/redact.js';
 import { runPipeline } from './src/pipeline.js';
+import { runRepoPipeline } from './src/repoPipeline.js';
+import { parseIssueUrl, fetchIssue } from './src/github.js';
 import { status as modelStatus, modelConfig } from './src/model.js';
 import { sandboxInfo } from './src/sandbox.js';
 import { COUPONS } from './fixtures/shop/src/cart.js';
@@ -14,6 +16,7 @@ const FIXTURE = path.join(ROOT, 'fixtures', 'shop');
 const DATA = process.env.REDGREEN_DATA || path.join(ROOT, 'data');
 const REPORTS = path.join(DATA, 'reports');
 const RUNS = path.join(DATA, 'runs');
+const REPOS = path.join(DATA, 'repos');
 fs.mkdirSync(REPORTS, { recursive: true }); fs.mkdirSync(RUNS, { recursive: true });
 const PORT = Number(process.env.PORT || 3000);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2', '.diff': 'text/x-diff; charset=utf-8' };
@@ -70,7 +73,17 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
       return send(res, 201, { id, redactions: count });
     }
-    if (p === '/api/reports' && req.method === 'GET') return send(res, 200, listJson(REPORTS).map(({ id, description, savedAt, events, redactions, sample, screenshot }) => ({ id, description, savedAt, events: events.length, redactions, sample: !!sample, screenshot: !!screenshot })));
+    if (p === '/api/issues' && req.method === 'POST') {
+      // GitHub mode: store the issue as a case; cloning/installing happens when the run starts (streamed live).
+      const { url } = await readBody(req, 10000);
+      let ref; try { ref = parseIssueUrl(url); } catch (e) { return send(res, 400, { error: e.message }); }
+      let issue; try { issue = await fetchIssue(ref); } catch (e) { return send(res, 502, { error: e.message }); }
+      const id = 'gh_' + Date.now().toString(36);
+      const rec = { schema: 'redgreen.issue/v1', kind: 'github', id, description: issue.title, issue, repo: ref, events: [], redactions: 0, savedAt: new Date().toISOString() };
+      fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
+      return send(res, 201, { id, title: issue.title });
+    }
+    if (p === '/api/reports' && req.method === 'GET') return send(res, 200, listJson(REPORTS).map(({ id, description, savedAt, events, redactions, sample, screenshot, kind, repo }) => ({ id, description, savedAt, events: events.length, redactions, sample: !!sample, screenshot: !!screenshot, kind: kind || 'report', repo: repo ? `${repo.owner}/${repo.repo}#${repo.number}` : undefined })));
     let m;
     if ((m = p.match(/^\/api\/reports\/([^/]+)$/))) {
       const id = safeId(m[1]); const f = id && path.join(REPORTS, id + '.json');
@@ -94,7 +107,9 @@ const server = http.createServer(async (req, res) => {
       const ping = setInterval(() => res.write(': ping\n\n'), 10000);
       try {
         const report = JSON.parse(fs.readFileSync(f, 'utf8'));
-        const run = await runPipeline({ report, fixtureDir: FIXTURE, emit });
+        const run = report.kind === 'github'
+          ? await runRepoPipeline({ kase: report, reposDir: REPOS, emit })
+          : await runPipeline({ report, fixtureDir: FIXTURE, emit });
         fs.writeFileSync(path.join(RUNS, run.id + '.json'), JSON.stringify(run, null, 2));
       } catch (e) {
         emit({ type: 'fatal', error: e.message });

@@ -249,3 +249,32 @@ pre{margin:8px 0 0;background:var(--code);border:1px solid var(--rule2);border-r
 .notice.err{background:var(--red-soft);color:var(--red-ink);border-color:var(--red-line)}
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+/* GitHub mode */
+.ghform{margin:0 0 14px}
+.ghform label{display:block;font-size:13px;font-weight:650;color:var(--ink2);margin:0 0 6px}
+.ghrow{display:flex;gap:6px}
+.ghform input{flex:1;min-width:0;font:inherit;font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--rule);border-radius:var(--r-s);padding:8px 10px;transition:border-color .15s}
+.ghform input:focus{outline:none;border-color:var(--green)}
+.ghform button{border:1px solid var(--rule);background:var(--raised);border-radius:var(--r-s);padding:8px 12px;font-weight:650;font-size:13px}
+.ghform button:hover{border-color:var(--ink2)}
+.ghform button:disabled{opacity:.6;cursor:default}
+.gherr{color:var(--red-ink);font-size:13px;margin:6px 0 0;min-height:0}
+.gherr:empty{display:none}
+.ghform.big{margin:0 0 30px;animation:fadeUp .7s var(--ease) 1.3s both}
+.ghform.big label{font-size:15px;color:var(--ink)}
+.ghform.big input{font-size:16px;padding:14px 16px;border-radius:var(--r-m)}
+.ghform.big button{background:var(--ink);color:#0B1118;border-color:var(--ink);font-size:16px;padding:0 22px;border-radius:var(--r-m);font-weight:750}
+.pip.gh{background:var(--paper);box-shadow:inset 0 0 0 2px var(--ink2)}
+.issue{white-space:pre-wrap;font-size:14px;color:var(--ink2);max-height:260px;overflow:auto;word-break:break-word}
+.files{list-style:none;margin:0;padding:6px 0}
+.files li{padding:9px 18px;border-top:1px solid var(--rule2)}
+.files li:first-child{border-top:0}
+.files li.empty{color:var(--steel);font-size:14px}
+.files.live li{animation:fadeUp .4s var(--ease) both;animation-delay:calc(var(--i) * 120ms)}
+.fp{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.fp code{font-family:var(--mono);font-size:13px;color:var(--ink);word-break:break-all}
+.fp .sc{font-size:12px;color:var(--steel);white-space:nowrap}
+.tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.tags span{font-family:var(--mono);font-size:11.5px;padding:1px 7px;border-radius:99px;background:var(--amber-soft);color:var(--amber-ink)}
+.rmeta a{color:var(--ink);text-underline-offset:3px}
