@@ -240,12 +240,9 @@ function reproducePage() {
       <div class="ghrow"><input id="ghUrlIntro" type="url" placeholder="https://github.com/owner/repo/issues/1" required autofocus><button type="submit">Reproduce it</button></div>
       <p class="gherr" role="alert"></p>
     </form>
-    <div class="samples"><span>Try:</span><button type="button" data-sample="https://github.com/samvit-srivastava/tiny-shop/issues/1">tiny-shop#1 · website</button></div>
     <h2 class="sec-h">Recent issues</h2>
     <div class="icards" id="recent"></div>
-    <p class="muted demo-note">Testing with an app instead of an issue? <a href="/shop/" target="_blank" rel="noopener">Open the instrumented demo shop</a>; its reports appear in History.</p>
   </section>`;
-  document.querySelectorAll('[data-sample]').forEach((b) => b.addEventListener('click', () => { $('#ghUrlIntro').value = b.dataset.sample; $('#ghUrlIntro').focus(); }));
   loadLists();
 }
 
