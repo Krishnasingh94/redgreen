@@ -53,9 +53,33 @@ const listJson = (dir, valid) => fs.readdirSync(dir).filter((f) => f.endsWith('.
 
 let busy = false;
 
+// Local-only API guard. The API can run code (GitHub mode, bot) and store credentials, so it must only be
+// driven by RedGreen's own pages, never by another website you happen to have open:
+// - Host must be localhost / 127.0.0.1 / [::1] (blocks DNS-rebinding attacks);
+// - cross-site requests are refused (Sec-Fetch-Site from modern browsers, Origin for the rest), which stops
+//   form-POST / <img> CSRF such as planting a bot token or starting a run.
+// Non-browser clients (scripts, tests) send neither header and are unaffected.
+// GitHub's redirect back to /api/bot/manifest is a cross-site top-level GET by design; it has its own state check.
+const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+function requestGuard(req, p) {
+  if (!p.startsWith('/api/') && !p.startsWith('/shop/api/')) return null;
+  if (!LOCAL_HOST.test(req.headers.host || '')) return 'host is not localhost';
+  if (req.method === 'GET' && p === '/api/bot/manifest') return null;
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return `cross-site request (${site})`;
+  const origin = req.headers.origin;
+  if (origin) {
+    let host = null; try { host = new URL(origin).host; } catch {}
+    if (host !== req.headers.host) return 'cross-origin request';
+  }
+  return null;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
+  const blocked = requestGuard(req, p);
+  if (blocked) return send(res, 403, { error: `Refused: ${blocked}. RedGreen's API only accepts requests from its own pages on localhost.` });
   try {
     // ---- RedGreen UI
     if (p === '/' || p === '/index.html') return serveFile(res, path.join(ROOT, 'ui'), 'index.html');
@@ -200,7 +224,7 @@ const BOT_CONFIG = path.join(DATA, 'bot-config.json');
 const readBotConfig = () => { try { return JSON.parse(fs.readFileSync(BOT_CONFIG, 'utf8')); } catch { return {}; } };
 const writeBotConfig = (c) => fs.writeFileSync(BOT_CONFIG, JSON.stringify(c, null, 2));
 const envAppKey = () => { try { return process.env.REDGREEN_APP_KEY_FILE ? fs.readFileSync(process.env.REDGREEN_APP_KEY_FILE, 'utf8') : ''; } catch { return ''; } };
-const getBotConfig = () => { const env = envConfig(), f = readBotConfig(); return { ...env, tryFix: !!f.tryFix, token: f.token || env.token, repos: f.repos ?? env.repos, openPrs: f.openPrs ?? env.openPrs, appId: f.appId || process.env.REDGREEN_APP_ID || '', privateKey: f.privateKey || envAppKey() }; };
+const getBotConfig = () => { const env = envConfig(), f = readBotConfig(); return { ...env, tryFix: !!f.tryFix, token: f.token || env.token, repos: f.repos ?? env.repos, allowAccounts: [...new Set([...(env.allowAccounts || []), ...(Array.isArray(f.allowAccounts) ? f.allowAccounts.map((a) => String(a).toLowerCase()) : [])])], openPrs: f.openPrs ?? env.openPrs, appId: f.appId || process.env.REDGREEN_APP_ID || '', privateKey: f.privateKey || envAppKey() }; };
 const bot = REPO_CODE_ALLOWED
   ? createBot({ createCase, runCase: runCaseForBot, getConfig: getBotConfig, loadState: () => (fs.existsSync(BOT_STATE) ? readJsonSafe(BOT_STATE) : null), saveState: (st) => fs.writeFileSync(BOT_STATE, JSON.stringify(st, null, 2)) })
   : { status: { enabled: false, repos: [], activity: [], error: 'The bot needs GitHub mode: start RedGreen with npm run dev:github.' }, start() {} };

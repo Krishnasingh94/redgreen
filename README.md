@@ -123,6 +123,8 @@ fixtures/shop/       synthetic demo app + recorder.js
 ## Safety & privacy
 
 - **GitHub mode (paste an issue URL) is off by default.** It clones the repo and runs *that repo's* own code: its `npm test`, its test runner, Gemma's patch to its source, and (in Website mode) its `npm run dev` server. For `node:test` repos the reproduction test runs under the permission model (read-only, no writes, no child processes), but the repo's own suite and Jest/Vitest/Mocha runs are **not** sandboxed (they get a temp clone, a timeout, a minimal environment, and dependency install scripts disabled). Enable it only for repos you trust: `npm run start:github` (or set `REDGREEN_ALLOW_REPO_CODE=1`). Issue text is redacted like bug reports.
+- **The GitHub bot only acts for accounts you trust.** In GitHub App mode anyone can install the app on their own repos, so RedGreen only runs issues from installations on the app owner's account plus accounts listed in `REDGREEN_BOT_ALLOW` (comma-separated); other installations are logged and ignored. `/redgreen` comments only count from owners, members and collaborators. Everything the bot posts is redacted (tokens, keys, emails) and your home folder / user name are replaced before it reaches GitHub.
+- **The local API only answers RedGreen's own pages.** Requests from other websites (cross-site form posts, `<img>` tricks) and foreign `Host` headers (DNS rebinding) are refused, so a page you visit can't plant a bot token or start a run.
 
 - Evidence is redacted (bearer tokens, API keys, JWTs, emails, card-like numbers, secret query params, `Authorization`/`Cookie` headers) **before** it is written to disk or sent to the model.
 - Screenshots are attached only if the user chooses one, and are kept locally.
