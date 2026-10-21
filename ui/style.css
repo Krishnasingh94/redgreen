@@ -337,3 +337,12 @@ pre{margin:8px 0 0;background:var(--code);border:1px solid var(--rule2);border-r
 details summary{margin-bottom:8px}
 .manual{margin-top:14px}
 #createApp{margin-top:4px}
+
+[hidden]{display:none!important}
+.quietlink{display:block;margin:22px 4px 0;font-size:13px;color:var(--steel);text-decoration:underline;text-underline-offset:3px}
+.quietlink:hover{color:var(--ink)}
+.intro p b{color:var(--ink)}
+.appcta{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-top:22px;padding:16px 18px;border:1px solid var(--rule);border-radius:var(--r-m);background:var(--panel);font-size:14.5px;color:var(--ink2);animation:fadeUp .7s var(--ease) 1.5s both}
+.appcta b{color:var(--ink)}
+.appcta code{font-family:var(--mono);font-size:13px;background:var(--raised);padding:1px 6px;border-radius:4px;color:var(--ink)}
+.side .ghform{margin-bottom:12px}

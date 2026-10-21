@@ -99,8 +99,9 @@ async function loadIssue(form) {
     if (!r.ok) throw new Error(j.error);
     input.value = '';
     await openReport(j.id);
+    if (form.id === 'ghIntro') setTimeout(() => analyze(j.id), 400); // "Reproduce it" starts right away
   } catch (e) { err.textContent = e.message; }
-  finally { btn.disabled = false; btn.textContent = form.id === 'ghSide' ? 'Load' : 'Load issue'; }
+  finally { btn.disabled = false; btn.textContent = form.id === 'ghSide' ? 'Load' : 'Reproduce it'; }
 }
 document.addEventListener('submit', (e) => { const f = e.target.closest('.ghform'); if (f) { e.preventDefault(); if (!running) loadIssue(f); } });
 
@@ -108,17 +109,20 @@ document.addEventListener('submit', (e) => { const f = e.target.closest('.ghform
 function intro() {
   $('#main').innerHTML = `<section class="intro">
     <h1><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
-    <p>RedGreen turns a bug report into a test that fails on your code, asks Gemma 4 on this laptop for a patch, and calls it fixed only when that same test passes and nothing else breaks.</p>
+    <p>Most bug reports say “it's broken.” RedGreen turns a GitHub issue into a <b>check that fails on your code</b>, using Gemma 4 running on this laptop, and shows exactly where to look. Every claim is backed by a real run, never by the model's word.</p>
     <form class="ghform big" id="ghIntro">
-      <label for="ghUrlIntro">Paste a GitHub issue from a JavaScript repo</label>
-      <div class="ghrow"><input id="ghUrlIntro" type="url" placeholder="https://github.com/owner/repo/issues/1" required><button type="submit">Load issue</button></div>
+      <label for="ghUrlIntro">Paste a GitHub issue from a website or JavaScript project</label>
+      <div class="ghrow"><input id="ghUrlIntro" type="url" placeholder="https://github.com/owner/repo/issues/1" required><button type="submit">Reproduce it</button></div>
       <p class="gherr" role="alert"></p>
     </form>
     <ol class="how">
-      <li><b>Find</b><span>From a GitHub issue, RedGreen clones the repo and finds the code it talks about. From the demo app, it captures what the user did, with private values removed.</span></li>
-      <li><b>Reproduce</b><span>Gemma writes a test in the repo's own framework. It counts only if it fails on the current code.</span></li>
-      <li><b>Prove</b><span>Gemma patches the code. The same test and the repo's own tests must pass before anything is called fixed.</span></li>
-    </ol></section>`;
+      <li><b>Find</b><span>RedGreen clones the repo, serves the site or runs its tests, and finds the code the issue talks about. The issue is treated as data, never as instructions.</span></li>
+      <li><b>Reproduce</b><span>Gemma 4 reads the issue, the code and a screenshot of the page, then writes a test or browser steps. It only counts if it fails on the current code.</span></li>
+      <li><b>Point</b><span>You get the failing check, the real output, and where to look. Optionally, a fix, suggested only after it made that check pass.</span></li>
+    </ol>
+    <div class="appcta"><div><b>Use it on your own repos.</b> Install RedGreen as a GitHub app. It answers issues labelled <code>redgreen</code> or a <code>/redgreen</code> comment.</div><button class="btn" id="ctaApp" type="button">Set up RedGreen for GitHub</button></div>
+  </section>`;
+  $('#ctaApp').addEventListener('click', () => botView());
 }
 
 function shell(report, savedRun) {
@@ -132,16 +136,16 @@ function shell(report, savedRun) {
   <div class="rhead">
     <div><p class="quote">${esc(report.description)}</p>
       <p class="rmeta">${gh ? metaLine : `${when} with ${report.events.length} captured events${report.screenshot ? ' and a screenshot' : ''}. ${report.redactions} private ${report.redactions === 1 ? 'value' : 'values'} removed before saving.${savedRun ? ` Showing a saved run from ${clock(savedRun.startedAt)}.` : ''}`}</p></div>
-    ${savedRun ? `<button class="go" id="go" data-again="1">Run again</button>` : `<button class="go" id="go"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>Reproduce and fix</button>`}
+    ${savedRun ? `<button class="go" id="go" data-again="1">Run again</button>` : `<button class="go" id="go"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>${state.tryFix ? 'Reproduce and fix' : 'Reproduce'}</button>`}
   </div>
   <div id="notice"></div>
   <section class="proof" id="proof" aria-live="polite">
-    <div class="side-p" id="pRed"><div class="lamp"></div><div class="cap">On the code as it is</div><div class="verdictword">Waiting</div><div class="fact">Gemma's test must fail here.</div></div>
+    <div class="side-p" id="pRed"><div class="lamp"></div><div class="cap">On the code as it is</div><div class="verdictword">Waiting</div><div class="fact">Gemma's check must fail here.</div></div>
     <div class="wire" aria-hidden="true"><svg viewBox="0 0 84 28" preserveAspectRatio="none"><path class="base" d="M4 14 H70"/><path class="flow" d="M4 14 H70"/><path class="head" d="M66 5 L80 14 L66 23 Z"/></svg></div>
     <div class="side-p" id="pGreen"><div class="lamp"></div><div class="cap">${state.tryFix === false ? 'Where to look' : "After Gemma's patch"}</div><div class="verdictword">Waiting</div><div class="fact">${state.tryFix === false ? 'Found after the bug is reproduced.' : 'The same test must pass here.'}</div></div>
   </section>
   <ol class="track" id="track">
-    ${[gh ? 'Clone and search' : 'Evidence', gh ? 'Repo tests' : 'Existing tests', 'Reproduce', 'Patch', 'Verify'].map((l, i) => `<li data-k="${i}"><span class="n">${i + 1}</span><span class="lbl">${l}</span><span class="tm">&nbsp;</span></li>`).join('')}
+    ${[gh ? 'Clone and search' : 'Evidence', gh ? 'Repo tests' : 'Existing tests', 'Reproduce', state.tryFix ? 'Patch' : 'Where to look', state.tryFix ? 'Verify' : 'Report'].map((l, i) => `<li data-k="${i}"><span class="n">${i + 1}</span><span class="lbl">${l}</span><span class="tm">&nbsp;</span></li>`).join('')}
   </ol>
   <div class="cols">
     <div>
@@ -153,7 +157,7 @@ function shell(report, savedRun) {
     </div>
     <div>
       <section class="sect" id="outSect" hidden><h3 id="outTitle">Verified fix</h3><div class="body out" id="out"></div></section>
-      <section class="sect"><h3>What Gemma tried <small>every result below is a real test run</small></h3><ol class="att" id="att"><li><i class="mk"></i><div><h4>Not started</h4><p class="sub">Press “Reproduce and fix” to begin.</p></div></li></ol></section>
+      <section class="sect"><h3>What Gemma tried <small>every result below is a real test run</small></h3><ol class="att" id="att"><li><i class="mk"></i><div><h4>Not started</h4><p class="sub">Press “${state.tryFix ? 'Reproduce and fix' : 'Reproduce'}” to begin.</p></div></li></ol></section>
     </div>
   </div>`;
   $('#go').addEventListener('click', () => analyze(report.id));
@@ -301,7 +305,7 @@ function finish(verdict, runId) {
     setPanel('#pRed', 'amber', 'Unproven', 'No test failed for the reported reason. Nothing was changed.');
     setPanel('#pGreen', '', 'Skipped', 'No patch without a failing test.');
   } else if (verdict === 'reproduced') {
-    stage(3, '', 'off'); stage(4, '', 'off');
+    stage(3, 'done', state.files?.length ? `${state.files.length} files` : 'done'); stage(4, 'done', 'ready');
     const where = (state.files || []).slice(0, 2).map((f) => `<code>${esc(f.path)}</code>`).join(' and ');
     $('#pGreen .cap').textContent = 'Where to look';
     setPanel('#pGreen', 'amber', 'Located', `${where ? `Start in ${where}. ` : ''}${state.cause ? esc(state.cause).slice(0, 180) : 'See the diagnosis below.'}`, true);
