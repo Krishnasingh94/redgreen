@@ -21,7 +21,8 @@ export function frameworkHint(project) {
 const bin = (dir, ...p) => path.join(dir, 'node_modules', ...p);
 function firstExisting(...ps) { return ps.find((p) => fs.existsSync(p)); }
 
-const ENV = () => ({ ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, TEMP: process.env.TEMP, TMP: process.env.TMP, APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, USERPROFILE: process.env.USERPROFILE, ComSpec: process.env.ComSpec } : { PATH: process.env.PATH, HOME: process.env.HOME }), CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', NODE_ENV: 'test' });
+// Minimal environment for the cloned repo's own code (tests, dev server): no tokens or other secrets from ours.
+export const ENV = () => ({ ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, TEMP: process.env.TEMP, TMP: process.env.TMP, APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, USERPROFILE: process.env.USERPROFILE, ComSpec: process.env.ComSpec } : { PATH: process.env.PATH, HOME: process.env.HOME }), CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', NODE_ENV: 'test' });
 
 // Run ONE test file with the repo's runner. No shell; timeout; minimal env.
 export async function runOne(givenDir, project, rel, timeoutMs = 60000) {

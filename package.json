@@ -15,6 +15,7 @@
     "reset": "node scripts/reset.js",
     "sample": "node scripts/make-sample.js",
     "check:sandbox": "node scripts/check-sandbox.js",
+    "doctor": "node scripts/doctor.js",
     "eval": "node scripts/eval.js",
     "dev:github": "node --watch-path=src --watch-path=server.js server.js --allow-repo-code",
     "start:github": "node server.js --allow-repo-code"

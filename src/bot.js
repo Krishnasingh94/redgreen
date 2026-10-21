@@ -1,4 +1,18 @@
+import os from 'node:os';
 import { createAppAuth } from './githubApp.js';
+import { redact } from './redact.js';
+
+// Everything the bot posts is public. Strip secrets (same rules as bug reports) and this machine's home
+// folder / user name, which can appear in test output and stack traces.
+export function sanitizeForGitHub(text) {
+  let t = redact(String(text)).value;
+  const home = os.homedir();
+  const forms = [...new Set([home, home.replaceAll('\\', '/'), encodeURI(home.replaceAll('\\', '/'))])].filter((h) => h && h.length > 3).sort((a, b) => b.length - a.length);
+  for (const h of forms) t = t.split(h).join('~');
+  let user = ''; try { user = os.userInfo().username; } catch {}
+  if (user && user.length > 2) t = t.replace(new RegExp(user.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '<user>');
+  return t;
+}
 // RedGreen GitHub bot (local, polling). No public URL needed: it polls the repos you list.
 // Trigger: an issue labelled "redgreen", or a "/redgreen" comment by someone with write access.
 // Result: a comment on the issue, and a PR only when the fix is verified red -> green.
@@ -7,7 +21,9 @@ const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
 export function envConfig() {
   const repos = String(process.env.REDGREEN_BOT_REPOS || '').split(',').map((s) => s.trim()).filter((s) => /^[\w.-]+\/[\w.-]+$/.test(s));
-  return { token: process.env.GITHUB_TOKEN || '', repos, label: process.env.REDGREEN_BOT_LABEL || 'redgreen', intervalMs: Number(process.env.REDGREEN_BOT_INTERVAL_MS || 30000), openPrs: process.env.REDGREEN_BOT_OPEN_PRS === '1' };
+  // GitHub App mode: only installations on these accounts are acted on (plus the app owner's own account).
+  const allowAccounts = String(process.env.REDGREEN_BOT_ALLOW || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return { token: process.env.GITHUB_TOKEN || '', repos, allowAccounts, label: process.env.REDGREEN_BOT_LABEL || 'redgreen', intervalMs: Number(process.env.REDGREEN_BOT_INTERVAL_MS || 30000), openPrs: process.env.REDGREEN_BOT_OPEN_PRS === '1' };
 }
 
 export function createBot({ createCase, runCase, log: log0 = console.log, loadState, saveState, getConfig = envConfig }) {
@@ -20,6 +36,7 @@ export function createBot({ createCase, runCase, log: log0 = console.log, loadSt
   let working = false, timer = null;
 
   let app = null; // GitHub App mode (installable by anyone); otherwise a personal token
+  const ignoredAccounts = new Set();
   async function tokenFor(repo) { return app ? app.tokenFor(repo) : cfg.token; }
   async function gh(method, path, body, repo) {
     const token = await tokenFor(repo || (path.match(/^\/repos\/([^/]+\/[^/?]+)/)?.[1] ?? ''));
@@ -28,13 +45,23 @@ export function createBot({ createCase, runCase, log: log0 = console.log, loadSt
     if (!res.ok) throw new Error(`GitHub ${method} ${path.split('?')[0]} → ${res.status}: ${text.slice(0, 200)}`);
     return text ? JSON.parse(text) : null;
   }
-  const comment = (repo, n, body) => gh('POST', `/repos/${repo}/issues/${n}/comments`, { body });
+  const comment = (repo, n, body) => gh('POST', `/repos/${repo}/issues/${n}/comments`, { body: sanitizeForGitHub(body) });
 
   async function poll() {
     cfg = getConfig(); status.mode = cfg.openPrs ? 'pr' : 'suggest';
     if (!status.enabled) return;
     let repos = cfg.repos;
-    if (app) { try { const inst = await app.repos(); status.installations = inst; repos = inst.map((r) => r.repo); } catch (e) { status.error = e.message; log('[bot] ' + e.message); return; } }
+    if (app) {
+      try {
+        // Anyone can install a GitHub App on their own repos, and on their own repo they can add the trigger label.
+        // Running their code here would let strangers execute code on this machine, so only allowed accounts count.
+        const inst = await app.repos();
+        const allowed = new Set([...(cfg.allowAccounts || []), ...(status.owner ? [status.owner.toLowerCase()] : [])]);
+        const ok = inst.filter((r) => allowed.has(String(r.account || '').toLowerCase()));
+        for (const r of inst) if (!ok.includes(r) && !ignoredAccounts.has(r.account)) { ignoredAccounts.add(r.account); log(`[bot] ignoring installation on @${r.account} (not in the allowed accounts; add it with REDGREEN_BOT_ALLOW or the Bot page)`); }
+        status.installations = ok; status.ignoredInstallations = inst.length - ok.length; repos = ok.map((r) => r.repo);
+      } catch (e) { status.error = e.message; log('[bot] ' + e.message); return; }
+    }
     status.repos = repos;
     for (const repo of repos) {
       try {
@@ -133,7 +160,7 @@ export function createBot({ createCase, runCase, log: log0 = console.log, loadSt
     const branch = `redgreen/${upstream ? `${upstream.repo}-${upstream.number}` : `issue-${number}`}-${Date.now().toString(36)}`;
     await gh('POST', `/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: commit.sha });
     const body = (run.prMarkdown || `Fixes #${number}.`).replace(/Fixes #\d+\./, `Fixes ${ref0}.`).replace(/## Fix #\d+:/, `## Fix ${ref0}:`);
-    return gh('POST', `/repos/${repo}/pulls`, { title: `Fix ${ref0}: ${title}`, head: branch, base, body });
+    return gh('POST', `/repos/${repo}/pulls`, { title: `Fix ${ref0}: ${title}`, head: branch, base, body: sanitizeForGitHub(body) });
   }
 
   return {
@@ -145,14 +172,14 @@ export function createBot({ createCase, runCase, log: log0 = console.log, loadSt
         if (cfg.appId && cfg.privateKey) {
           app = createAppAuth({ appId: cfg.appId, privateKey: cfg.privateKey });
           const info = await app.info();
-          status.kind = 'app'; status.login = `${info.slug}[bot]`; status.appName = info.name; status.installUrl = `${info.html_url}/installations/new`;
+          status.kind = 'app'; status.owner = info.owner?.login || null; status.login = `${info.slug}[bot]`; status.appName = info.name; status.installUrl = `${info.html_url}/installations/new`;
         } else if (cfg.token) {
           status.kind = 'token'; status.login = (await gh('GET', '/user')).login;
         } else { status.error = 'Set up the GitHub App (or connect a token) on the Bot page to turn the bot on.'; return; }
       } catch (e) { app = null; status.error = 'GitHub rejected the credentials: ' + e.message.slice(0, 160); log('[bot] ' + status.error); return; }
       status.enabled = true; status.error = null;
       log(`[bot] connected as @${status.login}${status.kind === 'app' ? ' (GitHub App: watching every repo it is installed on)' : `; watching ${cfg.repos.join(', ') || 'no repos yet'}`}`);
-      if (!timer) { timer = setInterval(poll, cfg.intervalMs); }
+      if (!timer) { timer = setInterval(poll, cfg.intervalMs); timer.unref?.(); } // the HTTP server keeps the process alive, not the bot
       poll();
     },
     gh: (m, p, b) => gh(m, p, b),

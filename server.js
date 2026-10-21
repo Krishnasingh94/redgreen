@@ -67,11 +67,38 @@ function authorized(req) {
   return pass.length === PASSWORD.length && crypto.timingSafeEqual(Buffer.from(pass), Buffer.from(PASSWORD));
 }
 
+// Local-only API guard. The API can run code (GitHub mode, bot) and store credentials, so it must only be
+// driven by RedGreen's own pages, never by another website you happen to have open:
+// - Host must be localhost / 127.0.0.1 / [::1] (blocks DNS-rebinding attacks);
+// - cross-site requests are refused (Sec-Fetch-Site from modern browsers, Origin for the rest), which stops
+//   form-POST / <img> CSRF such as planting a bot token or starting a run.
+// Non-browser clients (scripts, tests) send neither header and are unaffected.
+// GitHub's redirect back to /api/bot/manifest is a cross-site top-level GET by design; it has its own state check.
+const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+// A deployed instance (PUBLIC_URL) is reached under its public host name; that one is allowed too.
+const PUBLIC_HOST = (() => { try { return process.env.PUBLIC_URL ? new URL(process.env.PUBLIC_URL).host.toLowerCase() : null; } catch { return null; } })();
+function requestGuard(req, p) {
+  if (!p.startsWith('/api/') && !p.startsWith('/shop/api/')) return null;
+  const host = String(req.headers.host || '').toLowerCase();
+  if (!LOCAL_HOST.test(host) && host !== PUBLIC_HOST) return 'unexpected host';
+  if (req.method === 'GET' && p === '/api/bot/manifest') return null;
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return `cross-site request (${site})`;
+  const origin = req.headers.origin;
+  if (origin) {
+    let host = null; try { host = new URL(origin).host; } catch {}
+    if (host !== req.headers.host) return 'cross-origin request';
+  }
+  return null;
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.url === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (!authorized(req)) { res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="RedGreen"', 'Content-Type': 'text/plain' }); return res.end('RedGreen: password required'); }
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
+  const blocked = requestGuard(req, p);
+  if (blocked) return send(res, 403, { error: `Refused: ${blocked}. RedGreen's API only accepts requests from its own pages.` });
   try {
     // ---- RedGreen UI
     if (p === '/' || p === '/index.html') return serveFile(res, path.join(ROOT, 'ui'), 'index.html');
@@ -177,19 +204,26 @@ const server = http.createServer(async (req, res) => {
       if (!f || !fs.existsSync(f)) return send(res, 404, { error: 'report not found' });
       if (busy) return send(res, 409, { error: 'a run is already in progress' });
       busy = true;
+      // If the browser goes away mid-run (tab closed/refreshed), cancel at the next checkpoint so the
+      // single run slot is freed instead of returning 409 for minutes.
+      const ac = new AbortController();
+      res.on('close', () => { if (!res.writableFinished) ac.abort(); });
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-      const emit = (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`);
-      const ping = setInterval(() => res.write(': ping\n\n'), 10000);
+      const live = () => !res.destroyed && !res.writableEnded;
+      res.on('error', () => {}); // a vanished client must never crash the server
+      const emit = (ev) => { if (live()) res.write(`data: ${JSON.stringify(ev)}\n\n`); };
+      const ping = setInterval(() => { if (live()) res.write(': ping\n\n'); }, 10000);
       try {
         const report = JSON.parse(fs.readFileSync(f, 'utf8'));
         if (report.kind === 'github' && !REPO_CODE_ALLOWED) { emit({ type: 'fatal', error: REPO_MODE_OFF }); return; }
         const fix = !!getBotConfig().tryFix; // reproduce-only unless "Also try a fix" is switched on
         const run = report.kind === 'github'
-          ? await runRepoPipeline({ kase: report, reposDir: REPOS, emit, fix })
-          : await runPipeline({ report, fixtureDir: FIXTURE, emit, fix });
+          ? await runRepoPipeline({ kase: report, reposDir: REPOS, emit, fix, signal: ac.signal })
+          : await runPipeline({ report, fixtureDir: FIXTURE, emit, fix, signal: ac.signal });
         fs.writeFileSync(path.join(RUNS, run.id + '.json'), JSON.stringify(run, null, 2));
       } catch (e) {
-        emit({ type: 'fatal', error: e.message });
+        if (e.cancelled) console.log(`[redgreen] ${e.message} (report ${id})`);
+        else emit({ type: 'fatal', error: e.message });
       } finally { clearInterval(ping); busy = false; res.end(); }
       return;
     }
@@ -230,14 +264,15 @@ const BOT_STATE = path.join(DATA, 'bot-state.json');
 // Bot settings are set from the website and kept ONLY on this machine (git-ignored). The token is never sent back to the browser.
 const BOT_CONFIG = path.join(DATA, 'bot-config.json');
 const readBotConfig = () => { try { return JSON.parse(fs.readFileSync(BOT_CONFIG, 'utf8')); } catch { return {}; } };
-const writeBotConfig = (c) => fs.writeFileSync(BOT_CONFIG, JSON.stringify(c, null, 2));
+const writeBotConfig = (c) => fs.writeFileSync(BOT_CONFIG, JSON.stringify(c, null, 2), { mode: 0o600 }); // holds a token / private key: owner-only
 const envAppKey = () => { try { return process.env.REDGREEN_APP_KEY_FILE ? fs.readFileSync(process.env.REDGREEN_APP_KEY_FILE, 'utf8') : ''; } catch { return ''; } };
-const getBotConfig = () => { const env = envConfig(), f = readBotConfig(); return { ...env, tryFix: !!f.tryFix, token: f.token || env.token, repos: f.repos ?? env.repos, openPrs: f.openPrs ?? env.openPrs, appId: f.appId || process.env.REDGREEN_APP_ID || '', privateKey: f.privateKey || envAppKey() }; };
+const getBotConfig = () => { const env = envConfig(), f = readBotConfig(); return { ...env, tryFix: !!f.tryFix, token: f.token || env.token, repos: f.repos ?? env.repos, allowAccounts: [...new Set([...(env.allowAccounts || []), ...(Array.isArray(f.allowAccounts) ? f.allowAccounts.map((a) => String(a).toLowerCase()) : [])])], openPrs: f.openPrs ?? env.openPrs, appId: f.appId || process.env.REDGREEN_APP_ID || '', privateKey: f.privateKey || envAppKey() }; };
 const bot = REPO_CODE_ALLOWED
   ? createBot({ createCase, runCase: runCaseForBot, getConfig: getBotConfig, loadState: () => (fs.existsSync(BOT_STATE) ? readJsonSafe(BOT_STATE) : null), saveState: (st) => fs.writeFileSync(BOT_STATE, JSON.stringify(st, null, 2)) })
   : { status: { enabled: false, repos: [], activity: [], error: 'The bot needs GitHub mode: start RedGreen with npm run dev:github.' }, start() {} };
 
-let manifestState = null;
+// One-click GitHub App setup: a random, one-time, short-lived state ties GitHub's callback to a setup started here.
+let manifestState = null; // { value, exp }
 async function botApi(req, res, p) {
   const cfg = getBotConfig();
   const view = () => { const c = getBotConfig(); return { ...bot.status, tryFix: !!c.tryFix, connected: !!(c.token || (c.appId && c.privateKey)), appConfigured: !!(c.appId && c.privateKey), repos: bot.status.kind === 'app' ? bot.status.repos : c.repos, openPrs: !!c.openPrs, githubMode: REPO_CODE_ALLOWED }; };
@@ -246,7 +281,8 @@ async function botApi(req, res, p) {
   if (p === '/api/bot/manifest' && req.method === 'GET') {
     const u = new URL(req.url, 'http://localhost');
     const code = u.searchParams.get('code'), stateParam = u.searchParams.get('state');
-    if (!code || stateParam !== manifestState) { res.writeHead(302, { Location: '/#bot-error' }); return res.end(); }
+    const expected = manifestState; manifestState = null; // one-time
+    if (!code || !stateParam || !expected || Date.now() > expected.exp || stateParam.length !== expected.value.length || !crypto.timingSafeEqual(Buffer.from(stateParam), Buffer.from(expected.value))) { res.writeHead(302, { Location: '/#bot-error' }); return res.end(); }
     try {
       const r = await fetch(`https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`, { method: 'POST', headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'redgreen' } });
       if (!r.ok) throw new Error(`GitHub ${r.status}`);
@@ -257,7 +293,7 @@ async function botApi(req, res, p) {
     } catch (e) { res.writeHead(302, { Location: '/#bot-error' }); return res.end(); }
   }
   if (p === '/api/bot/manifest-form' && req.method === 'GET') {
-    manifestState = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    manifestState = { value: crypto.randomBytes(24).toString('hex'), exp: Date.now() + 10 * 60_000 };
     const origin = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
     const manifest = {
       name: `RedGreen ${Math.random().toString(36).slice(2, 6)}`,
@@ -268,7 +304,7 @@ async function botApi(req, res, p) {
       default_permissions: { issues: 'write', pull_requests: 'write', contents: 'write', metadata: 'read' },
       default_events: [],
     };
-    return send(res, 200, { action: `https://github.com/settings/apps/new?state=${manifestState}`, manifest: JSON.stringify(manifest) });
+    return send(res, 200, { action: `https://github.com/settings/apps/new?state=${manifestState.value}`, manifest: JSON.stringify(manifest) });
   }
   if (!REPO_CODE_ALLOWED) return send(res, 403, { error: REPO_MODE_OFF });
   if (p === '/api/bot/token' && req.method === 'POST') {

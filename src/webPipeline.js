@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { chatJson } from './model.js';
+import { isBadOutput } from './pipeline.js';
 import { WEB_REPRO_SCHEMA, WEB_FIX_SCHEMA, webReproPrompt, webFixPrompt } from './prompts.js';
 import { serveStatic, startDevServer, launchBrowser, snapshotPage, validateSteps, runSteps } from './web.js';
 import { rankFiles, excerpt, WEB_EXT } from './locate.js';
@@ -49,7 +50,12 @@ export async function runWebFlow({ kase, dir, site, project, step, run, tryFix =
       step('model.start', { phase: 'reproduce', attempt });
       let ans;
       try { ans = await chatJson({ ...webReproPrompt({ issue, outline: snap.outline, files, feedback }), schemaName: 'web_repro', schema: WEB_REPRO_SCHEMA, images: [snap.screenshot], temperature: temp(attempt) }); }
-      catch (e) { step('model.error', { phase: 'reproduce', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
+      catch (e) {
+        // Unparseable output is a rejected attempt (the model did answer); only transport failures are model.error.
+        if (isBadOutput(e)) step('repro.rejected', { attempt, proposal: { steps: [] }, rejection: 'invalid_json', reason: `Model output was not valid JSON (${e.message}).` });
+        else step('model.error', { phase: 'reproduce', attempt, error: e.message });
+        feedback = `Your response could not be used: ${e.message}`; continue;
+      }
       const json = ans.json, meta = { attempt, model: ans.model, durationMs: ans.durationMs, proposal: json };
       const problems = validateSteps(json.steps);
       if (problems.length) { step('repro.rejected', { ...meta, reason: 'Steps rejected: ' + problems.join('; ') }); feedback = problems.join('\n'); continue; }
@@ -74,7 +80,11 @@ export async function runWebFlow({ kase, dir, site, project, step, run, tryFix =
       step('model.start', { phase: 'fix', attempt });
       let ans;
       try { ans = await chatJson({ ...webFixPrompt({ files: files.map((f) => ({ ...f, text: f.lines <= 260 ? fs.readFileSync(path.join(dir, f.path), 'utf8') : f.text })), steps: repro.steps, failure, feedback }), schemaName: 'web_fix', schema: WEB_FIX_SCHEMA, temperature: temp(attempt) }); }
-      catch (e) { step('model.error', { phase: 'fix', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
+      catch (e) {
+      if (isBadOutput(e)) step('fix.rejected', { attempt, proposal: { root_cause: '', functions: [] }, rejection: 'invalid_json', reason: `Model output was not valid JSON (${e.message}).` });
+      else step('model.error', { phase: 'fix', attempt, error: e.message });
+      feedback = `Your response could not be used: ${e.message}`; continue;
+    }
       const meta = { attempt, model: ans.model, durationMs: ans.durationMs, proposal: { ...ans.json, functions: ans.json.changes } };
       await resetRepo(dir);
       let before;

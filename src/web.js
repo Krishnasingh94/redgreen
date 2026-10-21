@@ -2,8 +2,34 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { npmCli } from './github.js';
+import { ENV } from './repo.js';
+
+// Browser steps come from the model, which read untrusted issue text. They may only act on the site under test:
+// no file: URLs, no other origins, and no other services on this machine (RedGreen's own API, LM Studio...).
+const LOCALISH = (h) => /^(localhost|127(?:\.\d+){3}|\[::1\]|::1|0\.0\.0\.0)$/i.test(h) || /\.localhost$/i.test(h);
+export function stepTarget(value, baseUrl) {
+  const v = String(value ?? '/').trim() || '/';
+  if (/^[a-z][a-z0-9+.-]*:/i.test(v) && !/^https?:/i.test(v)) return null; // file:, javascript:, data: ...
+  let u, b; try { b = new URL(baseUrl); u = new URL(v, b); } catch { return null; }
+  return u.origin === b.origin ? u.href : null;
+}
+// Static check (the site's port isn't known yet): a path, or an absolute http(s) URL on this machine.
+function gotoLooksLocal(value) {
+  const v = String(value ?? '/').trim() || '/';
+  if (/^[a-z][a-z0-9+.-]*:/i.test(v) && !/^https?:/i.test(v)) return false;
+  if (/^\/\//.test(v)) return false;
+  if (!/^https?:/i.test(v)) return true;
+  try { return LOCALISH(new URL(v).hostname); } catch { return false; }
+}
+export function allowedRequest(url, baseUrl) {
+  let u, b; try { u = new URL(url); b = new URL(baseUrl); } catch { return false; }
+  if (u.protocol === 'data:' || u.protocol === 'blob:') return true;
+  if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'ws:' && u.protocol !== 'wss:') return false;
+  if (u.origin === b.origin || (u.host === b.host)) return true;
+  return !LOCALISH(u.hostname); // public CDNs etc. are fine; other local services are not
+}
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.txt': 'text/plain' };
 const BUILD_TOOLS = ['vite', 'webpack', 'parcel', 'next', 'react-scripts', '@angular/cli', 'nuxt', '@sveltejs/kit', 'astro', 'gatsby', 'svelte', 'vue'];
@@ -35,12 +61,31 @@ export function serveStatic(root) {
   });
 }
 
+// Stop the whole process tree: `npm run dev` starts the real server as a child, and killing only npm leaves
+// that server running in the background after every run.
+export function killTree(child) {
+  if (!child?.pid) return;
+  try {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    else {
+      // npm may start the script in its own process group, so walk the process list for all descendants.
+      const ps = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }).stdout || '';
+      const kids = new Map();
+      for (const line of ps.trim().split('\n')) { const [pid, ppid] = line.trim().split(/\s+/).map(Number); if (!kids.has(ppid)) kids.set(ppid, []); kids.get(ppid).push(pid); }
+      const all = [], stack = [child.pid];
+      while (stack.length) { const p = stack.pop(); all.push(p); stack.push(...(kids.get(p) || [])); }
+      for (const p of all.reverse()) { try { process.kill(p, 'SIGKILL'); } catch {} }
+    }
+  } catch { try { child.kill('SIGKILL'); } catch {} }
+}
+
 export function startDevServer(dir, script, timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
     const port = 4100 + Math.floor(Math.random() * 800);
-    const child = spawn(process.execPath, [npmCli(), 'run', script, '--', '--port', String(port)], { cwd: dir, env: { ...process.env, PORT: String(port), BROWSER: 'none', CI: '1' }, shell: false, windowsHide: true });
+    // The repo's dev server is untrusted code: give it the same minimal environment as its tests (no tokens).
+    const child = spawn(process.execPath, [npmCli(), 'run', script, '--', '--port', String(port)], { cwd: dir, env: { ...ENV(), NODE_ENV: 'development', PORT: String(port), BROWSER: 'none', CI: '1' }, shell: false, windowsHide: true });
     let out = '', done = false;
-    const finish = (err, url) => { if (done) return; done = true; clearTimeout(t); err ? (child.kill(), reject(err)) : resolve({ url, close: () => { try { child.kill(); } catch {} } }); };
+    const finish = (err, url) => { if (done) return; done = true; clearTimeout(t); err ? (killTree(child), reject(err)) : resolve({ url, close: () => killTree(child) }); };
     const onData = (d) => { out += d.toString(); const m = out.replace(/\x1b\[[0-9;]*m/g, '').match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+\/?/); if (m) finish(null, m[0].replace('[::1]', '127.0.0.1').replace(/\/?$/, '/')); };
     child.stdout.on('data', onData); child.stderr.on('data', onData);
     child.on('exit', (c) => finish(new Error(`dev server exited (${c}): ${out.slice(-400)}`)));
@@ -91,7 +136,7 @@ export function validateSteps(steps) {
   steps.forEach((s, i) => {
     if (!STEP_ACTIONS.includes(s?.action)) p.push(`step ${i + 1}: unknown action "${s?.action}" (allowed: ${STEP_ACTIONS.join(', ')})`);
     if (['click', 'fill', 'select', 'expect_visible', 'expect_hidden', 'expect_count', 'expect_value'].includes(s?.action) && !s.target) p.push(`step ${i + 1}: "${s.action}" needs a target`);
-    if (s?.action === 'goto' && /^https?:\/\//.test(s.value || '') && !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(s.value)) p.push(`step ${i + 1}: goto must stay on the site (use a path like "/")`);
+    if (s?.action === 'goto' && !gotoLooksLocal(s.value)) p.push(`step ${i + 1}: goto must stay on the site (use a path like "/")`);
   });
   if (!steps.some((s) => String(s?.action).startsWith('expect'))) p.push('there must be at least one expect_* step that checks the correct behaviour');
   return p;
@@ -109,6 +154,8 @@ function locate(page, target) {
 export async function runSteps(browser, baseUrl, steps, { stepTimeout = 4000 } = {}) {
   const t0 = Date.now();
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  // Network guard: the page (and the steps) can't reach local files or other services on this machine.
+  await page.route('**/*', (route) => (allowedRequest(route.request().url(), baseUrl) ? route.continue() : route.abort('blockedbyclient')));
   const errors = [], log = [];
   page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   let assertionFailure = null, broken = null;
@@ -118,7 +165,7 @@ export async function runSteps(browser, baseUrl, steps, { stepTimeout = 4000 } =
       const label = `${i + 1}. ${s.action}${s.target ? ` "${s.target}"` : ''}${s.value ? ` ${JSON.stringify(s.value)}` : ''}`;
       try {
         switch (s.action) {
-          case 'goto': await page.goto(new URL(s.value || '/', baseUrl).href, { waitUntil: 'load', timeout: 20000 }); break;
+          case 'goto': { const to = stepTarget(s.value, baseUrl); if (!to) throw new Error(`goto ${JSON.stringify(s.value)} leaves the site under test`); await page.goto(to, { waitUntil: 'load', timeout: 20000 }); break; }
           case 'click': await locate(page, s.target).click({ timeout: stepTimeout }); break;
           case 'fill': await locate(page, s.target).fill(String(s.value ?? ''), { timeout: stepTimeout }); await locate(page, s.target).dispatchEvent('change').catch(() => {}); break;
           case 'select': await locate(page, s.target).selectOption(String(s.value), { timeout: stepTimeout }); break;

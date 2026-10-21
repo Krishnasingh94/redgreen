@@ -10,7 +10,7 @@ import { reproTestPath, frameworkHint, runOne, runSuite, checkRepoTest, applyRep
 import { lineDiff } from './diff.js';
 import { detectSite } from './web.js';
 import { runWebFlow, wantsWebsite } from './webPipeline.js';
-import { validateRepro, normalizeRepro, isBadOutput, markModelUnavailable } from './pipeline.js';
+import { validateRepro, normalizeRepro, isBadOutput, markModelUnavailable, cancelled } from './pipeline.js';
 
 // Same rule as the demo pipeline: the model is untrusted, so check its JSON before use and only ever emit
 // proposals with every field present and the right type (the UI renders them directly).
@@ -34,7 +34,7 @@ const FIX_SHAPE = 'Return ONE JSON object with: root_cause, change, explanation 
 const MAX_ATTEMPTS = 3;
 const temp = (a) => [0.2, 0.6, 0.9][a - 1] ?? 0.9;
 
-export async function runRepoPipeline({ kase, reposDir, emit, token, fix: tryFix = false }) {
+export async function runRepoPipeline({ kase, reposDir, emit, token, fix: tryFix = false, signal }) {
   const run = { id: 'run_' + Date.now().toString(36), reportId: kase.id, kind: 'github', startedAt: new Date().toISOString(), steps: [], verdict: 'running', sandbox: { node: process.version, permissionModel: 'temp clone + timeout (third-party runners)', timeoutMs: 60000 } };
   const step = (type, data) => { const s = { type, at: new Date().toISOString(), ...data }; run.steps.push(s); emit?.(s); return s; };
   const fail = (verdict, reason) => { step('fatal', { error: reason }); run.verdict = verdict; return finish(run, emit); };
@@ -75,12 +75,14 @@ export async function runRepoPipeline({ kase, reposDir, emit, token, fix: tryFix
   step('located', { files: located.source.map(({ path: p, score, terms, lines }) => ({ path: p, score, terms, lines })), testPath, runner: project.runner });
 
   // 2. baseline: the repo's own suite
+  cancelled(signal);
   const baseline = await runSuite(dir);
   step('baseline', { result: baseline, note: baseline.passed ? 'The repo\'s test suite passes on current code — it does not catch this bug.' : 'The repo\'s test suite already fails on current code; RedGreen will require the patch not to make it worse.' });
 
   // 3. RED
   let repro = null, feedback = '';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && !repro; attempt++) {
+    cancelled(signal);
     step('model.start', { phase: 'reproduce', attempt });
     let ans;
     try { ans = await chatJson({ ...repoReproPrompt({ issue: kase.issue, project, files, testPath, exampleTest, hint: frameworkHint(project), feedback }), schemaName: 'repro', schema: REPRO_SCHEMA, temperature: temp(attempt) }); }
@@ -112,6 +114,7 @@ export async function runRepoPipeline({ kase, reposDir, emit, token, fix: tryFix
   let fix = null;
   const allowed = files.map((f) => f.path);
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && !fix; attempt++) {
+    cancelled(signal);
     step('model.start', { phase: 'fix', attempt });
     let ans;
     try { ans = await chatJson({ ...repoFixPrompt({ files, testPath, testCode: repro.test_code, failure: repro.result.output.slice(-2500), feedback }), schemaName: 'fix', schema: REPO_FIX_SCHEMA, temperature: temp(attempt) }); }
