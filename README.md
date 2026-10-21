@@ -62,6 +62,7 @@ If the bug can't be reproduced it says so, and claims nothing. Set `REDGREEN_BOT
 1. **LM Studio** → download **Gemma 4 E4B** (Q4_K_M) → load it → Developer tab → **Start Server** (port 1234).
 2. In this folder:
    ```bash
+   npm run doctor    # checks Node/sandbox, LM Studio + Gemma, git, ports; prints the fix for anything missing
    npm run smoke     # proves Gemma 4 is reachable and returns structured JSON
    npm start         # RedGreen on http://localhost:3000, demo shop on http://localhost:3000/shop/
    ```
