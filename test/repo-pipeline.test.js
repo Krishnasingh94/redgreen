@@ -40,7 +40,7 @@ const FIX = { root_cause: 'uses minus', change: 'a + b', explanation: '', functi
 
 async function run(answers) {
   queue = [...answers]; const events = [];
-  const r = await runRepoPipeline({ kase, reposDir, emit: (e) => events.push(e) });
+  const r = await runRepoPipeline({ kase, reposDir, fix: true, emit: (e) => events.push(e) });
   for (const e of events.filter((x) => x.proposal)) {
     if (e.type.startsWith('repro')) { assert.equal(typeof e.proposal.test_code, 'string'); assert.ok(Array.isArray(e.proposal.evidence_ids)); }
     else { assert.equal(typeof e.proposal.root_cause, 'string'); assert.ok(Array.isArray(e.proposal.functions)); }

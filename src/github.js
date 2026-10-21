@@ -80,3 +80,14 @@ export async function installDeps(dir) {
   const r = await run(process.execPath, [cli, hasLock ? 'ci' : 'install', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'], { cwd: dir, timeoutMs: 300000 });
   if (r.code !== 0) throw new Error('npm install failed: ' + r.out.slice(-600));
 }
+
+// Refuse repos that are too big to clone and install on a laptop (e.g. microsoft/vscode), with a clear message.
+export async function repoTooBig({ owner, repo }, token, limitMb = Number(process.env.REDGREEN_MAX_REPO_MB || 150)) {
+  try {
+    const r = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: GH_HEADERS(token) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const mb = Math.round((j.size || 0) / 1024);
+    return mb > limitMb ? `${owner}/${repo} is about ${mb} MB. That's too large to clone, install and run on this laptop (limit ${limitMb} MB). RedGreen works best on small and medium projects.` : null;
+  } catch { return null; }
+}

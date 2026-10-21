@@ -20,7 +20,7 @@ export function wantsWebsite(site, project, issue) {
   return UI_WORDS.test(issue.title + ' ' + issue.body);
 }
 
-export async function runWebFlow({ kase, dir, site, project, step, run }) {
+export async function runWebFlow({ kase, dir, site, project, step, run, tryFix = false }) {
   const issue = kase.issue;
   let server, browser;
   try {
@@ -64,6 +64,7 @@ export async function runWebFlow({ kase, dir, site, project, step, run }) {
       else { repro = { ...json, result, model: ans.model, durationMs: ans.durationMs }; step('repro.confirmed', { ...meta, result }); }
     }
     if (!repro) { run.verdict = 'not_reproduced'; return null; }
+    if (!tryFix) { run.verdict = 'reproduced'; return { repro, fix: null, baseline, skipped: true }; }
 
     // GREEN: patch, then the same steps must pass (and the repo's tests must not get worse)
     feedback = '';

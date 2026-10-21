@@ -335,3 +335,5 @@ pre{margin:8px 0 0;background:var(--code);border:1px solid var(--rule2);border-r
 @media (max-width:600px){.appform{grid-template-columns:1fr}}
 .repolist .hint{margin:0}
 details summary{margin-bottom:8px}
+.manual{margin-top:14px}
+#createApp{margin-top:4px}

@@ -144,9 +144,10 @@ const server = http.createServer(async (req, res) => {
       try {
         const report = JSON.parse(fs.readFileSync(f, 'utf8'));
         if (report.kind === 'github' && !REPO_CODE_ALLOWED) { emit({ type: 'fatal', error: REPO_MODE_OFF }); return; }
+        const fix = !!getBotConfig().tryFix; // reproduce-only unless "Also try a fix" is switched on
         const run = report.kind === 'github'
-          ? await runRepoPipeline({ kase: report, reposDir: REPOS, emit })
-          : await runPipeline({ report, fixtureDir: FIXTURE, emit });
+          ? await runRepoPipeline({ kase: report, reposDir: REPOS, emit, fix })
+          : await runPipeline({ report, fixtureDir: FIXTURE, emit, fix });
         fs.writeFileSync(path.join(RUNS, run.id + '.json'), JSON.stringify(run, null, 2));
       } catch (e) {
         emit({ type: 'fatal', error: e.message });
@@ -181,7 +182,7 @@ async function runCaseForBot(kase, token) {
   busy = true;
   try {
     broadcast({ type: 'bot.start', caseId: kase.id, repo: `${kase.repo.owner}/${kase.repo.repo}` });
-    const run = await runRepoPipeline({ kase, reposDir: REPOS, token, emit: (ev) => broadcast({ ...ev, caseId: kase.id }) });
+    const run = await runRepoPipeline({ kase, reposDir: REPOS, token, fix: !!getBotConfig().tryFix, emit: (ev) => broadcast({ ...ev, caseId: kase.id }) });
     fs.writeFileSync(path.join(RUNS, run.id + '.json'), JSON.stringify(run, null, 2));
     return run;
   } finally { busy = false; }
@@ -192,15 +193,44 @@ const BOT_CONFIG = path.join(DATA, 'bot-config.json');
 const readBotConfig = () => { try { return JSON.parse(fs.readFileSync(BOT_CONFIG, 'utf8')); } catch { return {}; } };
 const writeBotConfig = (c) => fs.writeFileSync(BOT_CONFIG, JSON.stringify(c, null, 2));
 const envAppKey = () => { try { return process.env.REDGREEN_APP_KEY_FILE ? fs.readFileSync(process.env.REDGREEN_APP_KEY_FILE, 'utf8') : ''; } catch { return ''; } };
-const getBotConfig = () => { const env = envConfig(), f = readBotConfig(); return { ...env, token: f.token || env.token, repos: f.repos ?? env.repos, openPrs: f.openPrs ?? env.openPrs, appId: f.appId || process.env.REDGREEN_APP_ID || '', privateKey: f.privateKey || envAppKey() }; };
+const getBotConfig = () => { const env = envConfig(), f = readBotConfig(); return { ...env, tryFix: !!f.tryFix, token: f.token || env.token, repos: f.repos ?? env.repos, openPrs: f.openPrs ?? env.openPrs, appId: f.appId || process.env.REDGREEN_APP_ID || '', privateKey: f.privateKey || envAppKey() }; };
 const bot = REPO_CODE_ALLOWED
   ? createBot({ createCase, runCase: runCaseForBot, getConfig: getBotConfig, loadState: () => (fs.existsSync(BOT_STATE) ? readJsonSafe(BOT_STATE) : null), saveState: (st) => fs.writeFileSync(BOT_STATE, JSON.stringify(st, null, 2)) })
   : { status: { enabled: false, repos: [], activity: [], error: 'The bot needs GitHub mode: start RedGreen with npm run dev:github.' }, start() {} };
 
+let manifestState = null;
 async function botApi(req, res, p) {
   const cfg = getBotConfig();
-  const view = () => { const c = getBotConfig(); return { ...bot.status, connected: !!(c.token || (c.appId && c.privateKey)), appConfigured: !!(c.appId && c.privateKey), repos: bot.status.kind === 'app' ? bot.status.repos : c.repos, openPrs: !!c.openPrs, githubMode: REPO_CODE_ALLOWED }; };
+  const view = () => { const c = getBotConfig(); return { ...bot.status, tryFix: !!c.tryFix, connected: !!(c.token || (c.appId && c.privateKey)), appConfigured: !!(c.appId && c.privateKey), repos: bot.status.kind === 'app' ? bot.status.repos : c.repos, openPrs: !!c.openPrs, githubMode: REPO_CODE_ALLOWED }; };
   if (p === '/api/bot' && req.method === 'GET') return send(res, 200, view());
+  // One-click app creation (GitHub "app manifest" flow): GitHub sends back the App ID + key; nothing is typed by hand.
+  if (p === '/api/bot/manifest' && req.method === 'GET') {
+    const u = new URL(req.url, 'http://localhost');
+    const code = u.searchParams.get('code'), stateParam = u.searchParams.get('state');
+    if (!code || stateParam !== manifestState) { res.writeHead(302, { Location: '/#bot-error' }); return res.end(); }
+    try {
+      const r = await fetch(`https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`, { method: 'POST', headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'redgreen' } });
+      if (!r.ok) throw new Error(`GitHub ${r.status}`);
+      const app = await r.json();
+      writeBotConfig({ ...readBotConfig(), appId: String(app.id), privateKey: app.pem, appSlug: app.slug });
+      await bot.start();
+      res.writeHead(302, { Location: '/#bot' }); return res.end();
+    } catch (e) { res.writeHead(302, { Location: '/#bot-error' }); return res.end(); }
+  }
+  if (p === '/api/bot/manifest-form' && req.method === 'GET') {
+    manifestState = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const origin = `http://localhost:${PORT}`;
+    const manifest = {
+      name: `RedGreen ${Math.random().toString(36).slice(2, 6)}`,
+      url: 'https://github.com/samvit-srivastava/redgreen',
+      description: 'Reproduces bugs from GitHub issues with a failing check, using Gemma 4.',
+      public: true,
+      redirect_url: `${origin}/api/bot/manifest`,
+      default_permissions: { issues: 'write', pull_requests: 'write', contents: 'write', metadata: 'read' },
+      default_events: [],
+    };
+    return send(res, 200, { action: `https://github.com/settings/apps/new?state=${manifestState}`, manifest: JSON.stringify(manifest) });
+  }
   if (!REPO_CODE_ALLOWED) return send(res, 403, { error: REPO_MODE_OFF });
   if (p === '/api/bot/token' && req.method === 'POST') {
     const { token } = await readBody(req, 5000);
@@ -243,7 +273,7 @@ async function botApi(req, res, p) {
     writeBotConfig({ ...readBotConfig(), repos: (getBotConfig().repos || []).filter((x) => x.toLowerCase() !== `${mm[1]}/${mm[2]}`.toLowerCase()) });
     return send(res, 200, view());
   }
-  if (p === '/api/bot/settings' && req.method === 'POST') { const { openPrs } = await readBody(req, 2000); writeBotConfig({ ...readBotConfig(), openPrs: !!openPrs }); return send(res, 200, view()); }
+  if (p === '/api/bot/settings' && req.method === 'POST') { const b = await readBody(req, 2000); const c = readBotConfig(); if ('openPrs' in b) c.openPrs = !!b.openPrs; if ('tryFix' in b) c.tryFix = !!b.tryFix; if (!c.tryFix) c.openPrs = false; writeBotConfig(c); return send(res, 200, view()); }
   if ((mm = p.match(/^\/api\/bot\/post\/([\w]+)$/)) && req.method === 'POST') {
     // Post a website run's result to its GitHub issue (same comment the bot writes).
     const runF = path.join(RUNS, mm[1] + '.json');

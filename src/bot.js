@@ -96,6 +96,8 @@ export function createBot({ createCase, runCase, log: log0 = console.log, loadSt
         log(`[bot] ${repo}#${number}: PR #${pr.number}`);
       }
       await comment(repo, number, `## 🔴 Reproduced\nThis ${kind} **fails** on the current code:\n${howTo}\n\n${proof}\n\n### 🔍 Where to look\n${where ? `Files: ${where}\n\n` : ''}${cause ? `Likely cause: ${cause}` : ''}\n\n${suggestion}${prLine}${footer}`);
+    } else if (repro && run.verdict === 'reproduced') {
+      await comment(repo, number, `## 🔴 Reproduced\nThis ${kind} **fails** on the current code:\n${howTo}\n\n${proof}\n\n### 🔍 Where to look\n${where ? `Files: ${where}\n\n` : ''}${cause ? `Likely cause: ${cause}` : ''}\n\nRedGreen only reproduces bugs here; it didn't change any code. The failing ${kind} above is ready to use as a regression check.${footer}`);
     } else if (repro) {
       await comment(repo, number, `## 🔴 Reproduced\nThis ${kind} **fails** on the current code:\n${howTo}\n\n${proof}\n\n### 🔍 Where to look\n${where ? `Files: ${where}\n\n` : ''}${cause ? `Likely cause: ${cause}` : ''}\n\n### No verified fix yet\nNone of the patches RedGreen tried made this ${kind} pass without breaking anything, so it isn't suggesting one. The failing ${kind} above is ready to use as a regression check.${footer}`);
     } else {
@@ -110,7 +112,7 @@ export function createBot({ createCase, runCase, log: log0 = console.log, loadSt
     // Fork workflow: the trigger may point at an UPSTREAM issue; we read that issue but work on (and push to) this repo.
     const m = String(text).match(/https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)/i);
     const upstream = m && `${m[1]}/${m[2]}`.toLowerCase() !== repo.toLowerCase() ? { owner: m[1], repo: m[2], number: Number(m[3]) } : null;
-    await comment(repo, number, `🔴🟢 **RedGreen** picked this up (${why})${upstream ? `: upstream issue ${upstream.owner}/${upstream.repo}#${upstream.number}, reproduced on this fork` : ''}. Reproducing it locally with Gemma 4.\n\n${cfg.openPrs ? "I'll open a pull request **only if** a check fails on the current code and passes after my patch." : "I'll reply with a failing check that proves the bug, where to look, and a suggested fix only if I've verified it makes that check pass. I won't change your code."}`);
+    await comment(repo, number, `🔴🟢 **RedGreen** picked this up (${why})${upstream ? `: upstream issue ${upstream.owner}/${upstream.repo}#${upstream.number}, reproduced on this fork` : ''}. Reproducing it locally with Gemma 4.\n\n${!cfg.tryFix ? "I'll reply with a failing check that proves the bug and where to look. I won't change your code." : cfg.openPrs ? "I'll open a pull request **only if** a check fails on the current code and passes after my patch." : "I'll reply with a failing check that proves the bug, where to look, and a suggested fix only if I've verified it makes that check pass. I won't change your code."}`);
     const token = await tokenFor(repo); // installation token: lets the worker read private repos it was installed on; never stored
     const kase = await createCase({ owner, repo: name, number, upstream }, upstream ? undefined : token);
     const run = await runCase(kase, token);

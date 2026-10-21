@@ -6,6 +6,7 @@ const secs = (ms) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' s';
 const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 let state = null;          // current view state
+let tryFixSetting = false; // reproduce-only unless switched on in the Bot page
 let running = false, tick = null;
 
 /* ---------- tiny JS highlighter (tokenise raw, escape per token) ---------- */
@@ -39,6 +40,7 @@ const assertion = (out = '') => ({
 async function loadStatus() {
   try {
     const s = await getJSON('/api/status');
+    tryFixSetting = !!s.tryFix;
     const b = $('#modelBadge');
     if (s.model.ok) {
       b.className = 'badge on';
@@ -68,6 +70,7 @@ function prettyModel(id) {
 /* ---------- sidebar ---------- */
 const VERDICT = {
   fixed_verified: { pip: 'green', text: 'Fix verified' },
+  reproduced: { pip: 'red', text: 'Reproduced' },
   reproduced_not_fixed: { pip: 'red', text: 'Reproduced, no verified fix' },
   not_reproduced: { pip: 'amber', text: 'Could not reproduce' },
 };
@@ -119,7 +122,7 @@ function intro() {
 }
 
 function shell(report, savedRun) {
-  state = { report, savedRun, stages: {}, live: null, steps: [] };
+  state = { report, savedRun, stages: {}, live: null, steps: [], tryFix: tryFixSetting };
   const gh = report.kind === 'github';
   const when = report.sample ? 'Scripted sample' : `Reported at ${clock(report.savedAt)}`;
   const metaLine = gh
@@ -135,7 +138,7 @@ function shell(report, savedRun) {
   <section class="proof" id="proof" aria-live="polite">
     <div class="side-p" id="pRed"><div class="lamp"></div><div class="cap">On the code as it is</div><div class="verdictword">Waiting</div><div class="fact">Gemma's test must fail here.</div></div>
     <div class="wire" aria-hidden="true"><svg viewBox="0 0 84 28" preserveAspectRatio="none"><path class="base" d="M4 14 H70"/><path class="flow" d="M4 14 H70"/><path class="head" d="M66 5 L80 14 L66 23 Z"/></svg></div>
-    <div class="side-p" id="pGreen"><div class="lamp"></div><div class="cap">After Gemma's patch</div><div class="verdictword">Waiting</div><div class="fact">The same test must pass here.</div></div>
+    <div class="side-p" id="pGreen"><div class="lamp"></div><div class="cap">${state.tryFix === false ? 'Where to look' : "After Gemma's patch"}</div><div class="verdictword">Waiting</div><div class="fact">${state.tryFix === false ? 'Found after the bug is reproduced.' : 'The same test must pass here.'}</div></div>
   </section>
   <ol class="track" id="track">
     ${[gh ? 'Clone and search' : 'Evidence', gh ? 'Repo tests' : 'Existing tests', 'Reproduce', 'Patch', 'Verify'].map((l, i) => `<li data-k="${i}"><span class="n">${i + 1}</span><span class="lbl">${l}</span><span class="tm">&nbsp;</span></li>`).join('')}
@@ -212,6 +215,7 @@ function render(s, live) {
       if ($('#pageSect')) { $('#pageSect').hidden = false; $('#pageShot').src = s.screenshot; if (live) $('#pageSect').classList.add('reveal'); }
       break;
     case 'located':
+      state.files = s.files;
       $('#files').innerHTML = s.files.map((f, i) => `<li style="--i:${i}"><div class="fp"><code>${esc(f.path)}</code><span class="sc">${f.lines} lines</span></div><div class="tags">${f.terms.map((t) => `<span>${esc(t)}</span>`).join('')}</div></li>`).join('');
       if (live) $('#files').classList.add('live');
       break;
@@ -248,6 +252,7 @@ function render(s, live) {
       attempt(`<li><i class="mk fail"></i><div><h4>${s.proposal.steps ? 'Bug reproduced in a real browser' : 'Bug reproduced: the test fails on your code'}</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${chip(s.result)}</div>
         <details open><summary>${s.proposal.steps ? 'Browser steps, written by Gemma and run by RedGreen' : 'Reproduction test, written by Gemma'}</summary>${proposalBody(s.proposal, af?.step)}</details>${outBlock(s.result, s.proposal.steps ? 'Browser run log' : 'Failure output')}</div></li>`);
       if (s.result.screenshot && $('#pageShot')) { state.failShot = s.result.screenshot; }
+      state.cause = s.proposal.hypothesis;
       $('#hypSect').hidden = false;
       $('#hyp').innerHTML = `<p>${esc(s.proposal.hypothesis)}</p><dl class="ev"><dt>Expected</dt><dd class="exp">${esc(s.proposal.expected)}</dd><dt>Actual</dt><dd class="act">${esc(s.proposal.actual)}</dd><dt>Evidence</dt><dd>${(s.proposal.evidence_ids || []).map((x) => state.report.kind === 'github' ? `“${esc(x)}”` : esc(x)).join(', ') || 'none cited'}</dd></dl>`;
       if ($('#tl')) $('#tl').innerHTML = timeline(state.report, s.proposal.evidence_ids || []);
@@ -295,6 +300,11 @@ function finish(verdict, runId) {
     stage(2, 'red');
     setPanel('#pRed', 'amber', 'Unproven', 'No test failed for the reported reason. Nothing was changed.');
     setPanel('#pGreen', '', 'Skipped', 'No patch without a failing test.');
+  } else if (verdict === 'reproduced') {
+    stage(3, '', 'off'); stage(4, '', 'off');
+    const where = (state.files || []).slice(0, 2).map((f) => `<code>${esc(f.path)}</code>`).join(' and ');
+    $('#pGreen .cap').textContent = 'Where to look';
+    setPanel('#pGreen', 'amber', 'Located', `${where ? `Start in ${where}. ` : ''}${state.cause ? esc(state.cause).slice(0, 180) : 'See the diagnosis below.'}`, true);
   } else if (verdict === 'reproduced_not_fixed') {
     setPanel('#pGreen', 'amber', 'No fix', 'No patch passed. Your code is unchanged.');
   }
@@ -306,13 +316,13 @@ async function showOutcome(runId, verdict) {
   const md = await fetch(`/api/runs/${runId}/pr.md`).then((r) => r.text());
   const v = state.verified;
   const sect = $('#outSect'); sect.hidden = false; sect.classList.add('reveal');
-  $('#outTitle').textContent = v ? 'Verified fix' : 'Report for the maintainer';
+  $('#outTitle').textContent = v ? 'Verified fix' : verdict === 'reproduced' ? 'Bug report with proof' : 'Report for the maintainer';
   const patch = v ? `${v.diff}\n` : '';
   $('#out').innerHTML = `
     ${state.shots ? `<div class="ba"><figure><img src="${state.shots.before}" alt="The page before the patch, with the bug"><figcaption><i class="pip red"></i>Before the patch</figcaption></figure><figure><img src="${state.shots.after}" alt="The page after the patch"><figcaption><i class="pip green"></i>After the patch</figcaption></figure></div>` : ''}
-    ${v ? `<p class="change"><b>What changed:</b> ${esc((v.proposal.change && v.proposal.change.length < 180 && !/[{};]\s*\S/.test(v.proposal.change)) ? v.proposal.change : (v.proposal.root_cause || v.proposal.change || '').slice(0, 400))}</p>${diffBlock(v.diff, true)}` : '<p>The bug is reproduced by a failing test, but no patch was verified. The report below includes the test so a person can take it from here.</p>'}
+    ${v ? `<p class="change"><b>What changed:</b> ${esc((v.proposal.change && v.proposal.change.length < 180 && !/[{};]\s*\S/.test(v.proposal.change)) ? v.proposal.change : (v.proposal.root_cause || v.proposal.change || '').slice(0, 400))}</p>${diffBlock(v.diff, true)}` : (verdict === 'reproduced' ? '<p>The bug is proven by a failing check. RedGreen did not change any code; the report below has the check, where to look, and the real output, ready for a developer.</p>' : '<p>The bug is reproduced by a failing test, but no patch was verified. The report below includes the test so a person can take it from here.</p>')}
     <div class="actions" style="margin-top:12px">
-      <button class="btn" id="copyPr">Copy PR description</button>
+      <button class="btn" id="copyPr">${v ? 'Copy PR description' : 'Copy report'}</button>
       <a class="btn" href="/api/runs/${esc(runId)}/pr.md" download="redgreen-${esc(runId)}.md">Download report</a>
       ${v ? `<a class="btn" id="dlPatch" download="redgreen-${esc(runId)}.diff">Download patch</a>` : ''}
       ${state.report.kind === 'github' ? `<button class="btn" id="postGh">Post result to the GitHub issue</button>` : ''}
@@ -377,15 +387,11 @@ async function botView() {
     <div class="botgrid">
       <section class="sect"><h3>${isApp ? 'GitHub App' : '1. Set up the GitHub App'} ${b.enabled ? '<small class="ok">running</small>' : ''}</h3><div class="body">
         ${isApp && b.enabled ? `<p>This computer is the worker: it checks every repo the app is installed on and does the red → green work with Gemma 4.</p><button class="btn" id="removeApp">Remove app credentials</button>`
-        : `<ol class="howto">
-            <li><a href="https://github.com/settings/apps/new" target="_blank" rel="noopener">Register a new GitHub App</a>. Any name, homepage = your repo.</li>
-            <li>Webhook: <b>untick “Active”</b>. RedGreen checks for work itself, so no server is needed.</li>
-            <li>Repository permissions: <b>Issues</b>, <b>Pull requests</b>, <b>Contents</b>: read and write.</li>
-            <li>“Where can this app be installed?”: <b>Any account</b>. Create it.</li>
-            <li>Copy the <b>App ID</b>, then <b>Generate a private key</b> (a .pem file downloads).</li>
-          </ol>
-          <form id="appForm" class="appform"><input id="appId" inputmode="numeric" placeholder="App ID" required><label class="file"><input id="appKey" type="file" accept=".pem" required><span>Choose .pem key</span></label><button type="submit" class="btn">Save</button></form>
-          <p class="hint">The key stays on this computer and is never shown again.</p>`}
+        : `<p>Create your own RedGreen app on GitHub in one click. GitHub fills in everything and sends the keys straight back here. You type nothing.</p>
+          <button class="go" id="createApp" type="button"><span class="lamps" aria-hidden="true"><i class="l r"></i><i class="l g"></i></span>Create RedGreen on GitHub</button>
+          <details class="manual"><summary>Already registered an app? Enter its details by hand</summary>
+            <form id="appForm" class="appform"><input id="appId" inputmode="numeric" placeholder="App ID" required><label class="file"><input id="appKey" type="file" accept=".pem" required><span>Choose .pem key</span></label><button type="submit" class="btn">Save</button></form>
+          </details>`}
         <p class="gherr" id="appErr">${b.appConfigured && !b.enabled && b.error ? esc(b.error) : ''}</p></div></section>
       <section class="sect"><h3>${isApp ? 'Installed on' : '2. Repos'}</h3><div class="body">
         <ul class="repolist">${repoItems}</ul>
@@ -396,9 +402,11 @@ async function botView() {
           : `<form id="tokForm" class="ghrow"><input id="tok" type="password" autocomplete="off" placeholder="github_pat_…" required><button type="submit" class="btn">Connect</button></form>`}
           <p class="gherr" id="tokErr"></p></details>`}
         <p class="hint">Contributing to someone else's project? Install RedGreen on your fork and comment <code>/redgreen https://github.com/owner/project/issues/42</code> on an issue there.</p></div></section>
-      <section class="sect"><h3>What RedGreen may do</h3><div class="body">
-        <label class="check"><input type="checkbox" id="openPrs" ${b.openPrs ? 'checked' : ''} ${b.enabled ? '' : 'disabled'}> Also open a pull request when a fix is verified</label>
-        <p class="hint">Off: it only comments. On: it also opens a PR, and only for fixes that went red → green.</p></div></section>
+      <section class="sect"><h3>What RedGreen does</h3><div class="body">
+        <p class="hint" style="margin-top:0">By default RedGreen only <b>reproduces</b>: it proves the bug with a failing check and points to where to look. It never changes code.</p>
+        <label class="check"><input type="checkbox" id="tryFix" ${b.tryFix ? 'checked' : ''} ${b.githubMode ? '' : 'disabled'}> Also try a fix, and suggest it only if it makes the failing check pass</label>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="openPrs" ${b.openPrs ? 'checked' : ''} ${b.enabled && b.tryFix ? '' : 'disabled'}> Also open a pull request for verified fixes</label>
+        </div></section>
       <section class="sect"><h3>Activity ${b.current ? `<small>working on ${esc(b.current.repo)}#${b.current.number}</small>` : ''}</h3><ul class="activity">${act}</ul></section>
     </div>
   </section>`; });
@@ -410,12 +418,19 @@ async function botView() {
     btn.disabled = false; btn.textContent = 'Save';
     if (!ok) $('#appErr').textContent = j.error; else { botView(); loadStatus(); }
   });
+  $('#createApp')?.addEventListener('click', async () => {
+    const { action, manifest } = await getJSON('/api/bot/manifest-form');
+    const f = document.createElement('form'); f.method = 'post'; f.action = action;
+    const i = document.createElement('input'); i.type = 'hidden'; i.name = 'manifest'; i.value = manifest; f.appendChild(i);
+    document.body.appendChild(f); f.submit();
+  });
   $('#appKey')?.addEventListener('change', (e) => { e.target.nextElementSibling.textContent = e.target.files[0]?.name || 'Choose .pem key'; });
   $('#removeApp')?.addEventListener('click', async () => { await post('/api/bot/app', null, 'DELETE'); botView(); loadStatus(); });
   $('#tokForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const { ok, j } = await post('/api/bot/token', { token: $('#tok').value }); $('#tok').value = ''; if (!ok) $('#tokErr').textContent = j.error; else { botView(); loadStatus(); } });
   $('#disconnect')?.addEventListener('click', async () => { await post('/api/bot/token', null, 'DELETE'); botView(); loadStatus(); });
   $('#repoForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const { ok, j } = await post('/api/bot/repos', { repo: $('#repoIn').value }); if (!ok) $('#tokErr').textContent = j.error; else { botView(); loadStatus(); } });
   $('#openPrs')?.addEventListener('change', (e) => post('/api/bot/settings', { openPrs: e.target.checked }));
+  $('#tryFix')?.addEventListener('change', async (e) => { await post('/api/bot/settings', { tryFix: e.target.checked }); botView(); });
   document.querySelectorAll('[data-unwatch]').forEach((btn) => btn.addEventListener('click', async () => { const [o, r] = btn.dataset.unwatch.split('/'); await post(`/api/bot/repos/${o}/${r}`, null, 'DELETE'); botView(); loadStatus(); }));
 }
 document.addEventListener('click', (e) => { if (e.target.closest('#botLink') && !running) botView(); });
@@ -441,4 +456,5 @@ function followBot() {
   };
 }
 
-intro(); loadStatus(); loadLists(); followBot(); setInterval(loadStatus, 10000);
+intro(); loadStatus(); loadLists(); followBot();
+if (location.hash.startsWith('#bot')) { botView().then(() => { if (location.hash === '#bot-error') $('#appErr').textContent = 'GitHub did not finish creating the app. Try again.'; history.replaceState(null, '', '/'); }); } setInterval(loadStatus, 10000);

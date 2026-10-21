@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chatJson } from './model.js';
 import { REPRO_SCHEMA, REPO_FIX_SCHEMA, repoReproPrompt, repoFixPrompt } from './prompts.js';
-import { cloneRepo, detectProject, installDeps } from './github.js';
+import { cloneRepo, detectProject, installDeps, repoTooBig } from './github.js';
 import { rankFiles, excerpt, listFiles } from './locate.js';
 import { reproTestPath, frameworkHint, runOne, runSuite, checkRepoTest, applyRepoPatch, resetRepo } from './repo.js';
 import { lineDiff } from './diff.js';
@@ -34,7 +34,7 @@ const FIX_SHAPE = 'Return ONE JSON object with: root_cause, change, explanation 
 const MAX_ATTEMPTS = 3;
 const temp = (a) => [0.2, 0.6, 0.9][a - 1] ?? 0.9;
 
-export async function runRepoPipeline({ kase, reposDir, emit, token }) {
+export async function runRepoPipeline({ kase, reposDir, emit, token, fix: tryFix = false }) {
   const run = { id: 'run_' + Date.now().toString(36), reportId: kase.id, kind: 'github', startedAt: new Date().toISOString(), steps: [], verdict: 'running', sandbox: { node: process.version, permissionModel: 'temp clone + timeout (third-party runners)', timeoutMs: 60000 } };
   const step = (type, data) => { const s = { type, at: new Date().toISOString(), ...data }; run.steps.push(s); emit?.(s); return s; };
   const fail = (verdict, reason) => { step('fatal', { error: reason }); run.verdict = verdict; return finish(run, emit); };
@@ -44,6 +44,8 @@ export async function runRepoPipeline({ kase, reposDir, emit, token }) {
   // 1. prepare (deterministic)
   let sha, project = null, site = null;
   try {
+    const big = await repoTooBig(kase.repo, token);
+    if (big) throw new Error(big);
     step('prepare', { stage: 'clone', note: `Cloning ${owner}/${repo}` });
     const t0 = Date.now();
     if (fs.existsSync(path.join(dir, '.git'))) { await resetRepo(dir); sha = kase.repo.sha; } else sha = await cloneRepo(kase.repo, dir, token);
@@ -52,9 +54,9 @@ export async function runRepoPipeline({ kase, reposDir, emit, token }) {
     site = detectSite(dir);
     if (wantsWebsite(site, project, kase.issue)) {
       step('prepare', { stage: 'detected', note: `${project?.name || repo}: website`, durationMs: Date.now() - t0, sha, mode: 'website' });
-      const out = await runWebFlow({ kase, dir, site, project, step, run });
+      const out = await runWebFlow({ kase, dir, site, project, step, run, tryFix });
       if (!out) { if (run.verdict === 'running') run.verdict = 'not_reproduced'; return finish(run, emit); }
-      run.verdict = out.fix ? 'fixed_verified' : 'reproduced_not_fixed';
+      run.verdict = out.fix ? 'fixed_verified' : out.skipped ? 'reproduced' : 'reproduced_not_fixed';
       run.prMarkdown = webReport({ kase, run, ...out, sha });
       return finish(run, emit);
     }
@@ -103,6 +105,7 @@ export async function runRepoPipeline({ kase, reposDir, emit, token }) {
   }
   await resetRepo(dir);
   if (!repro) { run.verdict = 'not_reproduced'; markModelUnavailable(run, 'reproduce'); return finish(run, emit); }
+  if (!tryFix) { run.verdict = 'reproduced'; run.prMarkdown = repoReport({ kase, run, repro, fix: null, baseline, project, sha, testPath }); return finish(run, emit); }
 
   // 4. patch + GREEN
   feedback = '';
@@ -164,7 +167,7 @@ function repoReport({ kase, run, repro, fix, baseline, project, sha, testPath })
 
 ${fix ? `Fixes #${kase.repo.number}.
 
-✅ **Verified by RedGreen**: the new test \`${testPath}\` failed on \`${sha}\` and passes with this patch; the repo's own test suite ${fix.results[1].note ? 'has no new failures' : 'passes'}.` : `⚠️ Reproduced #${kase.repo.number} with a failing test; no patch passed verification yet.`}
+✅ **Verified by RedGreen**: the new test \`${testPath}\` failed on \`${sha}\` and passes with this patch; the repo's own test suite ${fix.results[1].note ? 'has no new failures' : 'passes'}.` : (run.verdict === 'reproduced' ? `🔴 Reproduced #${kase.repo.number} with a failing test. Fixing was not requested; the test below is ready to use as a regression check.` : `⚠️ Reproduced #${kase.repo.number} with a failing test; no patch passed verification yet.`)}
 
 ### Root cause
 ${fix ? fix.root_cause : repro.hypothesis}
@@ -197,7 +200,7 @@ function webReport({ kase, run, repro, fix, baseline, sha }) {
 
 ${fix ? `Fixes #${kase.repo.number}.
 
-✅ **Verified by RedGreen in a real browser**: the steps below failed on \`${sha}\` and pass with this patch${fix.results[1] ? `; the repo's own tests ${fix.results[1].passed ? 'pass' : 'fail'}` : ''}.` : `⚠️ Reproduced #${kase.repo.number} in a real browser; no patch passed verification yet.`}
+✅ **Verified by RedGreen in a real browser**: the steps below failed on \`${sha}\` and pass with this patch${fix.results[1] ? `; the repo's own tests ${fix.results[1].passed ? 'pass' : 'fail'}` : ''}.` : (run.verdict === 'reproduced' ? `🔴 Reproduced #${kase.repo.number} in a real browser. Fixing was not requested.` : `⚠️ Reproduced #${kase.repo.number} in a real browser; no patch passed verification yet.`)}
 
 ### Root cause
 ${fix ? fix.root_cause : repro.hypothesis}

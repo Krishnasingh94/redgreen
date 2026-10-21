@@ -77,7 +77,7 @@ export const isBadOutput = (e) => /did not return valid JSON|empty model respons
 const REPRO_SHAPE = 'Return ONE JSON object with: hypothesis (string), evidence_ids (array of strings), expected (string), actual (string), test_name (string), test_code (string).';
 const FIX_SHAPE = 'Return ONE JSON object with: root_cause (string), change (string), functions (non-empty array of {"name": string, "code": string} where code is the complete rewritten function), explanation (string).';
 
-export async function runPipeline({ report, fixtureDir, emit }) {
+export async function runPipeline({ report, fixtureDir, emit, fix: tryFix = true }) {
   const run = { id: 'run_' + Date.now().toString(36), reportId: report.id, startedAt: new Date().toISOString(), steps: [], verdict: 'running', sandbox: sandboxInfo };
   const step = (type, data) => { const s = { type, at: new Date().toISOString(), ...data }; run.steps.push(s); emit?.(s); return s; };
   // Normalise to LF: a Windows checkout or editor can turn the fixture into CRLF, and then exact find/replace
@@ -136,6 +136,7 @@ export async function runPipeline({ report, fixtureDir, emit }) {
     }
   }
   if (!repro) { run.verdict = 'not_reproduced'; markModelUnavailable(run, 'reproduce'); return finish(run, emit); }
+  if (!tryFix) { run.verdict = 'reproduced'; run.repro = repro; run.prMarkdown = buildReport({ report, run, repro, fix: null, baseline }); return finish(run, emit); }
 
   // 2. Fix: model rewrites whole functions (or find/replace edits); verified only if repro test AND existing tests pass
   feedback = '';

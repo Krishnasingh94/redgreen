@@ -1,7 +1,7 @@
 // Builds a PR description / bug report from REAL run artifacts only.
 export function buildReport({ report, run, repro, fix, baseline }) {
   const ev = report.events.filter((e) => (repro.evidence_ids || []).includes(e.id));
-  const verdictLine = fix ? '✅ **Verified**: reproduction test failed before the patch and passes after it; existing tests still pass.' : '⚠️ **Reproduced, not fixed**: a failing test reproduces the bug, but no proposed patch passed verification.';
+  const verdictLine = run.verdict === 'reproduced' ? '🔴 **Reproduced**: a test replays the user\'s steps and fails on the current code. Fixing was not requested.' : fix ? '✅ **Verified**: reproduction test failed before the patch and passes after it; existing tests still pass.' : '⚠️ **Reproduced, not fixed**: a failing test reproduces the bug, but no proposed patch passed verification.';
   return `## Fix: ${repro.test_name}
 
 ${verdictLine}
