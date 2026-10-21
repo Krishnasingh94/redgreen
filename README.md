@@ -98,7 +98,7 @@ fixtures/shop/       synthetic demo app + recorder.js
 
 ## Safety & privacy
 
-- **GitHub mode (paste an issue URL) is off by default.** It clones the repo and runs *that repo's* own code: its `npm test`, its test runner, and Gemma's patch to its source. For `node:test` repos the reproduction test runs under the permission model (read-only, no writes, no child processes), but the repo's own suite and Jest/Vitest/Mocha runs are **not** sandboxed (they get a temp clone, a timeout, a minimal environment, and dependency install scripts disabled). Enable it only for repos you trust: `REDGREEN_ALLOW_REPO_CODE=1 npm start`. Issue text is redacted like bug reports.
+- **GitHub mode (paste an issue URL) is off by default.** It clones the repo and runs *that repo's* own code: its `npm test`, its test runner, Gemma's patch to its source, and (in Website mode) its `npm run dev` server. For `node:test` repos the reproduction test runs under the permission model (read-only, no writes, no child processes), but the repo's own suite and Jest/Vitest/Mocha runs are **not** sandboxed (they get a temp clone, a timeout, a minimal environment, and dependency install scripts disabled). Enable it only for repos you trust: `REDGREEN_ALLOW_REPO_CODE=1 npm start`. Issue text is redacted like bug reports.
 
 - Evidence is redacted (bearer tokens, API keys, JWTs, emails, card-like numbers, secret query params, `Authorization`/`Cookie` headers) **before** it is written to disk or sent to the model.
 - Screenshots are attached only if the user chooses one, and are kept locally.
