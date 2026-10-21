@@ -73,7 +73,7 @@ export function normalizeFix(j) {
 }
 
 // chatJson throws these when the endpoint answered but the text wasn't a JSON object.
-const isBadOutput = (e) => /did not return valid JSON|empty model response/.test(e.message);
+export const isBadOutput = (e) => /did not return valid JSON|empty model response/.test(e.message);
 const REPRO_SHAPE = 'Return ONE JSON object with: hypothesis (string), evidence_ids (array of strings), expected (string), actual (string), test_name (string), test_code (string).';
 const FIX_SHAPE = 'Return ONE JSON object with: root_cause (string), change (string), functions (non-empty array of {"name": string, "code": string} where code is the complete rewritten function), explanation (string).';
 
@@ -186,7 +186,7 @@ export async function runPipeline({ report, fixtureDir, emit }) {
 
 // If EVERY attempt in a phase failed to reach the model, nothing was tested: say so instead of implying
 // the model tried and failed. The verdict keeps its contract value; `reason` + `modelUnavailable` explain it.
-function markModelUnavailable(run, phase) {
+export function markModelUnavailable(run, phase) {
   const attempts = run.steps.filter((s) => s.type === 'model.start' && s.phase === phase).length;
   const errors = run.steps.filter((s) => s.type === 'model.error' && s.phase === phase);
   if (attempts && errors.length === attempts) {
