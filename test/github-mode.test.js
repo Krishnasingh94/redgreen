@@ -84,3 +84,16 @@ test('brokenTest flags sandbox denials and broken tests, not real assertion fail
   assert.match(brokenTest('SyntaxError: Unexpected token'), /SyntaxError/);
   assert.equal(brokenTest('AssertionError [ERR_ASSERTION]: 0 == 4'), null);
 });
+
+test('applyRepoPatch keeps the file\'s own line endings (CRLF stays CRLF)', async () => {
+  const { applyRepoPatch } = await import('../src/repo.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-eol-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'src'));
+    fs.writeFileSync(path.join(dir, 'src', 'a.js'), 'export function f(x) {\r\n  return x - 1;\r\n}\r\n\r\nexport function g() {\r\n  return 2;\r\n}\r\n');
+    applyRepoPatch(dir, ['src/a.js'], [{ file: 'src/a.js', name: 'f', code: 'export function f(x) {\n  return x + 1;\n}' }]);
+    const out = fs.readFileSync(path.join(dir, 'src', 'a.js'), 'utf8');
+    assert.match(out, /return x \+ 1;/);
+    assert.equal(out.replace(/\r\n/g, '').includes('\n'), false, 'no bare LF left: ' + JSON.stringify(out));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
