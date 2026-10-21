@@ -55,3 +55,44 @@ test('valid report still saves after bad requests (201 + redactions)', async () 
   assert.ok(redactions >= 1);
   assert.doesNotMatch(fs.readFileSync(path.join(data, 'reports', id + '.json'), 'utf8'), /a@b\.com/);
 });
+
+test('non-object JSON bodies → 400, never 500', async () => {
+  for (const body of ['null', '[]', '"x"', '42']) {
+    for (const u of ['/api/reports', '/shop/api/checkout']) {
+      const r = await post(u, body);
+      assert.equal(r.status, 400, `${u} ${body}`);
+    }
+  }
+});
+
+test('checkout rejects malformed carts instead of computing NaN', async () => {
+  const bad = [
+    { items: 'nope', clientTotal: 1 },
+    { items: [{ price: '50', qty: 1 }], clientTotal: 50 },
+    { items: [{ price: 50, qty: 1.5 }], clientTotal: 75 },
+    { items: [{ price: -1, qty: 1 }], clientTotal: -1 },
+    { items: [null], clientTotal: 0 },
+    { items: [{ price: 50, qty: 1 }] },
+    { items: [{ price: 50, qty: 1 }], clientTotal: 50, coupon: 7 },
+  ];
+  for (const b of bad) assert.equal((await post('/shop/api/checkout', JSON.stringify(b))).status, 400, JSON.stringify(b));
+  const ok = await post('/shop/api/checkout', JSON.stringify({ items: [{ id: 'hp', price: 50, qty: 1 }], coupon: 'SAVE20', clientTotal: 40 }));
+  assert.equal(ok.status, 200); assert.equal((await ok.json()).charged, 40);
+  const mismatch = await post('/shop/api/checkout', JSON.stringify({ items: [{ id: 'hp', price: 50, qty: 1 }], coupon: null, clientTotal: 40 }));
+  assert.equal(mismatch.status, 422); assert.match((await mismatch.json()).error, /client sent \$40\.00, server computed \$50\.00/);
+});
+
+test('report bundles with malformed events are rejected up front', async () => {
+  for (const events of [[null], [1], [[]], [{ id: 'e1' }]]) {
+    const r = await post('/api/reports', JSON.stringify({ schema: 'redgreen.evidence/v1', events }));
+    assert.equal(r.status, 400, JSON.stringify(events));
+  }
+  assert.equal((await post('/api/reports', JSON.stringify({ schema: 'redgreen.evidence/v1', description: { x: 1 }, events: [] }))).status, 400);
+});
+
+test('reports saved at the same moment get distinct ids (no overwrite)', async () => {
+  const body = JSON.stringify({ schema: 'redgreen.evidence/v1', description: 'same time', events: [{ id: 'e1', type: 'action' }] });
+  const ids = await Promise.all(Array.from({ length: 8 }, () => post('/api/reports', body).then((r) => r.json()).then((j) => j.id)));
+  assert.equal(new Set(ids).size, 8, ids.join(','));
+  for (const id of ids) assert.ok(fs.existsSync(path.join(data, 'reports', id + '.json')), id);
+});

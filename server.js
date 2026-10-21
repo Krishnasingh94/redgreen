@@ -37,8 +37,14 @@ async function readBody(req, limit = 8_000_000) {
   let size = 0; const chunks = [];
   const fail = (status, msg) => Object.assign(new Error(msg), { status });
   for await (const c of req) { size += c.length; if (size > limit) throw fail(413, `body too large (max ${limit} bytes)`); chunks.push(c); }
-  try { return JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { throw fail(400, 'invalid JSON body'); }
+  let body;
+  try { body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { throw fail(400, 'invalid JSON body'); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw fail(400, 'JSON body must be an object');
+  return body;
 }
+// Unique, filename-safe ids (time-ordered, plus randomness so two saves in the same millisecond never collide).
+const newId = (prefix) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const MAX_EVENTS = 5000;
 // One corrupt or half-written file must not take down the whole list: skip it (and log once).
 const skipped = new Set();
 const readJsonSafe = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { if (!skipped.has(f)) { skipped.add(f); console.warn(`[redgreen] skipping unreadable ${path.basename(f)}: ${e.message}`); } return null; } };
@@ -61,7 +67,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/shop/api/checkout' && req.method === 'POST') {
       // Server-side price check (independent of the client cart module)
       const b = await readBody(req);
-      const sub = (b.items || []).reduce((s, it) => s + it.price * it.qty, 0);
+      const items = b.items ?? [];
+      const okItem = (it) => it && typeof it === 'object' && Number.isFinite(it.price) && it.price >= 0 && Number.isInteger(it.qty) && it.qty >= 0;
+      if (!Array.isArray(items) || !items.every(okItem) || !Number.isFinite(b.clientTotal) || (b.coupon != null && typeof b.coupon !== 'string')) return send(res, 400, { error: 'invalid checkout: items must be [{price: number >= 0, qty: integer >= 0}], clientTotal a number' });
+      const sub = items.reduce((s, it) => s + it.price * it.qty, 0);
       const expected = Math.round((sub - sub * (COUPONS[b.coupon] ?? 0)) * 100) / 100;
       if (Math.abs(expected - b.clientTotal) > 0.009) return send(res, 422, { error: `Total mismatch: client sent $${Number(b.clientTotal).toFixed(2)}, server computed $${expected.toFixed(2)}` });
       return send(res, 200, { ok: true, charged: expected });
@@ -72,12 +81,14 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/reports' && req.method === 'POST') {
       const raw = await readBody(req);
       if (raw.schema !== 'redgreen.evidence/v1' || !Array.isArray(raw.events)) return send(res, 400, { error: 'invalid evidence bundle' });
+      if (raw.events.length > MAX_EVENTS || !raw.events.every((e) => e && typeof e === 'object' && !Array.isArray(e) && typeof e.type === 'string')) return send(res, 400, { error: `invalid evidence bundle: events must be objects with a "type" (max ${MAX_EVENTS})` });
+      if (raw.description != null && typeof raw.description !== 'string') return send(res, 400, { error: 'invalid evidence bundle: description must be a string' });
       // Screenshot is user-approved and kept local; it is excluded from text redaction (regexes would corrupt base64).
       const screenshot = typeof raw.screenshot === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(raw.screenshot) ? raw.screenshot : null;
       delete raw.screenshot;
       const { value, count } = redact(raw);
       if (screenshot) value.screenshot = screenshot;
-      const id = 'rpt_' + Date.now().toString(36);
+      const id = newId('rpt');
       const rec = { ...value, id, redactions: count, savedAt: new Date().toISOString() };
       fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
       return send(res, 201, { id, redactions: count });
@@ -90,7 +101,7 @@ const server = http.createServer(async (req, res) => {
       let fetched; try { fetched = await fetchIssue(ref); } catch (e) { return send(res, 502, { error: e.message }); }
       // Issue text is untrusted user content: redact it before it is stored or sent to the model.
       const { value: issue, count: issueRedactions } = redact(fetched);
-      const id = 'gh_' + Date.now().toString(36);
+      const id = newId('gh');
       const rec = { schema: 'redgreen.issue/v1', kind: 'github', id, description: issue.title, issue, repo: ref, events: [], redactions: issueRedactions, savedAt: new Date().toISOString() };
       fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
       return send(res, 201, { id, title: issue.title });
