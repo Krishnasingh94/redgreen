@@ -28,7 +28,7 @@ ${repro.test_code.trim()}
 ${fix ? `
 ### Patch
 Root cause: ${fix.root_cause}
-
+${fix.change ? `\nChange (as stated by the model): ${fix.change}\n` : ''}
 \`\`\`diff
 ${fix.diff}
 \`\`\`

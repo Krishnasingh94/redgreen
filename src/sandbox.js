@@ -21,7 +21,7 @@ const READ_VARIANTS = [
 ];
 function probe() {
   if (!PERM_FLAG) return null;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redgreen-probe-'));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'redgreen-probe-'))); // long path, as in createWorkspace
   try {
     fs.mkdirSync(path.join(dir, 'sub'));
     fs.writeFileSync(path.join(dir, 'sub', 'data.txt'), 'ok');
@@ -45,8 +45,11 @@ export const sandboxInfo = {
   timeoutMs: 15000, node: process.version,
 };
 
-export function createWorkspace(fixtureDir) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redgreen-'));
+// baseDir is optional (tests use it to prove paths with spaces work).
+export function createWorkspace(fixtureDir, baseDir = os.tmpdir()) {
+  // realpath: on Windows %TEMP% is often an 8.3 short path (C:\Users\KRISHN~1\...) while Node's module
+  // loader reads the long real path, which the permission model would then deny. Use the real path everywhere.
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(baseDir, 'redgreen-')));
   fs.cpSync(fixtureDir, dir, { recursive: true, filter: (src) => !src.includes('node_modules') });
   return dir;
 }
@@ -55,9 +58,20 @@ export function removeWorkspace(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
+// Replace every form of the workspace path that can appear in test output with <sandbox>:
+// native (C:\a b\x), forward-slash (C:/a b/x), and file-URL-encoded (C:/a%20b/x). Case-insensitive on Windows.
+export function maskPaths(output, workspace, win = process.platform === 'win32') {
+  const fwd = workspace.replaceAll('\\', '/');
+  const forms = [...new Set([workspace, fwd, encodeURI(fwd)])].sort((a, b) => b.length - a.length);
+  const re = new RegExp(forms.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), win ? 'gi' : 'g');
+  return output.replace(re, '<sandbox>');
+}
+
 export function runTestFile(workspace, relFile, timeoutMs = sandboxInfo.timeoutMs) {
   const file = path.join(workspace, relFile);
   const args = [];
+  // READ_ARGS is the read-allow form probed at startup (a plain directory grant first: it covers everything
+  // beneath it). Writes, child processes, workers and native addons stay denied: no --allow-* flag is passed for them.
   if (READ_ARGS) args.push(PERM_FLAG, ...READ_ARGS(workspace));
   args.push('--no-warnings', '--test-reporter=spec', file);
   const env = { NODE_ENV: 'test', NO_COLOR: '1', FORCE_COLOR: '0' };
@@ -68,14 +82,15 @@ export function runTestFile(workspace, relFile, timeoutMs = sandboxInfo.timeoutM
     let out = '';
     const cap = (d) => { if (out.length < 60000) out += d.toString(); };
     child.stdout.on('data', cap); child.stderr.on('data', cap);
-    const timer = setTimeout(() => { child.kill('SIGKILL'); out += `\n[redgreen] killed after ${timeoutMs}ms timeout`; }, timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); out += `\n[redgreen] killed after ${timeoutMs}ms timeout`; }, timeoutMs);
     child.on('close', (code, signal) => {
       clearTimeout(timer);
-      const output = out.replaceAll(workspace, '<sandbox>');
+      const output = maskPaths(out, workspace);
       const pass = Number(output.match(/ℹ pass (\d+)|# pass (\d+)/)?.slice(1).find(Boolean) ?? 0);
       const fail = Number(output.match(/ℹ fail (\d+)|# fail (\d+)/)?.slice(1).find(Boolean) ?? 0);
       const assertion = /AssertionError|ERR_ASSERTION/.test(output);
-      resolve({ file: relFile, exitCode: code, signal, passed: code === 0, pass, fail, assertionFailure: assertion, durationMs: Date.now() - started, output: output.slice(-8000) });
+      resolve({ file: relFile, exitCode: code, signal, timedOut, passed: code === 0 && !timedOut, pass, fail, assertionFailure: assertion && !timedOut, durationMs: Date.now() - started, output: output.slice(-8000) });
     });
   });
 }

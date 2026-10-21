@@ -40,4 +40,5 @@ test('pipeline: rejects non-reproducing test, confirms repro, verifies fix', asy
   assert.ok(types.includes('repro.confirmed'));
   assert.equal(run.verdict, 'fixed_verified', JSON.stringify(run.steps.filter((s) => s.reason), null, 1));
   assert.match(run.prMarkdown, /Verified/);
+  assert.match(run.patch, /^diff --git a\/fixtures\/shop\/src\/cart\.js[\s\S]*new file mode 100644/m);
 });
