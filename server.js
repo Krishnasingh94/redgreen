@@ -1,5 +1,6 @@
 // RedGreen server: zero dependencies. `node server.js` then open http://localhost:3000
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -222,14 +223,15 @@ const BOT_STATE = path.join(DATA, 'bot-state.json');
 // Bot settings are set from the website and kept ONLY on this machine (git-ignored). The token is never sent back to the browser.
 const BOT_CONFIG = path.join(DATA, 'bot-config.json');
 const readBotConfig = () => { try { return JSON.parse(fs.readFileSync(BOT_CONFIG, 'utf8')); } catch { return {}; } };
-const writeBotConfig = (c) => fs.writeFileSync(BOT_CONFIG, JSON.stringify(c, null, 2));
+const writeBotConfig = (c) => fs.writeFileSync(BOT_CONFIG, JSON.stringify(c, null, 2), { mode: 0o600 }); // holds a token / private key: owner-only
 const envAppKey = () => { try { return process.env.REDGREEN_APP_KEY_FILE ? fs.readFileSync(process.env.REDGREEN_APP_KEY_FILE, 'utf8') : ''; } catch { return ''; } };
 const getBotConfig = () => { const env = envConfig(), f = readBotConfig(); return { ...env, tryFix: !!f.tryFix, token: f.token || env.token, repos: f.repos ?? env.repos, allowAccounts: [...new Set([...(env.allowAccounts || []), ...(Array.isArray(f.allowAccounts) ? f.allowAccounts.map((a) => String(a).toLowerCase()) : [])])], openPrs: f.openPrs ?? env.openPrs, appId: f.appId || process.env.REDGREEN_APP_ID || '', privateKey: f.privateKey || envAppKey() }; };
 const bot = REPO_CODE_ALLOWED
   ? createBot({ createCase, runCase: runCaseForBot, getConfig: getBotConfig, loadState: () => (fs.existsSync(BOT_STATE) ? readJsonSafe(BOT_STATE) : null), saveState: (st) => fs.writeFileSync(BOT_STATE, JSON.stringify(st, null, 2)) })
   : { status: { enabled: false, repos: [], activity: [], error: 'The bot needs GitHub mode: start RedGreen with npm run dev:github.' }, start() {} };
 
-let manifestState = null;
+// One-click GitHub App setup: a random, one-time, short-lived state ties GitHub's callback to a setup started here.
+let manifestState = null; // { value, exp }
 async function botApi(req, res, p) {
   const cfg = getBotConfig();
   const view = () => { const c = getBotConfig(); return { ...bot.status, tryFix: !!c.tryFix, connected: !!(c.token || (c.appId && c.privateKey)), appConfigured: !!(c.appId && c.privateKey), repos: bot.status.kind === 'app' ? bot.status.repos : c.repos, openPrs: !!c.openPrs, githubMode: REPO_CODE_ALLOWED }; };
@@ -238,7 +240,8 @@ async function botApi(req, res, p) {
   if (p === '/api/bot/manifest' && req.method === 'GET') {
     const u = new URL(req.url, 'http://localhost');
     const code = u.searchParams.get('code'), stateParam = u.searchParams.get('state');
-    if (!code || stateParam !== manifestState) { res.writeHead(302, { Location: '/#bot-error' }); return res.end(); }
+    const expected = manifestState; manifestState = null; // one-time
+    if (!code || !stateParam || !expected || Date.now() > expected.exp || stateParam.length !== expected.value.length || !crypto.timingSafeEqual(Buffer.from(stateParam), Buffer.from(expected.value))) { res.writeHead(302, { Location: '/#bot-error' }); return res.end(); }
     try {
       const r = await fetch(`https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`, { method: 'POST', headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'redgreen' } });
       if (!r.ok) throw new Error(`GitHub ${r.status}`);
@@ -249,7 +252,7 @@ async function botApi(req, res, p) {
     } catch (e) { res.writeHead(302, { Location: '/#bot-error' }); return res.end(); }
   }
   if (p === '/api/bot/manifest-form' && req.method === 'GET') {
-    manifestState = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    manifestState = { value: crypto.randomBytes(24).toString('hex'), exp: Date.now() + 10 * 60_000 };
     const origin = `http://localhost:${PORT}`;
     const manifest = {
       name: `RedGreen ${Math.random().toString(36).slice(2, 6)}`,
@@ -260,7 +263,7 @@ async function botApi(req, res, p) {
       default_permissions: { issues: 'write', pull_requests: 'write', contents: 'write', metadata: 'read' },
       default_events: [],
     };
-    return send(res, 200, { action: `https://github.com/settings/apps/new?state=${manifestState}`, manifest: JSON.stringify(manifest) });
+    return send(res, 200, { action: `https://github.com/settings/apps/new?state=${manifestState.value}`, manifest: JSON.stringify(manifest) });
   }
   if (!REPO_CODE_ALLOWED) return send(res, 403, { error: REPO_MODE_OFF });
   if (p === '/api/bot/token' && req.method === 'POST') {
