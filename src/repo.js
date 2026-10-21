@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, npmCli } from './github.js';
+import { permissionArgs } from './sandbox.js';
 
 export function reproTestPath(project) {
   const ext = project.runner === 'jest' && !project.esm ? '.test.js' : project.runner === 'jest' ? '.test.js' : project.runner === 'vitest' ? '.test.js' : '.test.mjs';
@@ -29,7 +30,9 @@ export async function runOne(dir, project, rel, timeoutMs = 60000) {
     case 'vitest': { const v = firstExisting(bin(dir, 'vitest', 'vitest.mjs')); if (!v) throw new Error('vitest is not installed in the repo'); args = [v, 'run', rel]; break; }
     case 'jest': { const j = firstExisting(bin(dir, 'jest', 'bin', 'jest.js'), bin(dir, 'jest-cli', 'bin', 'jest.js')); if (!j) throw new Error('jest is not installed in the repo'); args = [j, '--ci', '--runTestsByPath', rel]; break; }
     case 'mocha': { const m = firstExisting(bin(dir, 'mocha', 'bin', 'mocha.js'), bin(dir, 'mocha', 'bin', 'mocha')); if (!m) throw new Error('mocha is not installed in the repo'); args = [m, rel]; break; }
-    default: args = ['--test', rel];
+    // node:test: run the file in-process under the permission model (read-only repo dir, no writes, no
+    // child processes). Not `--test`, which would spawn a child process and need --allow-child-process.
+    default: args = [...permissionArgs(fs.realpathSync.native(dir)), '--test-reporter=spec', rel];
   }
   const t0 = Date.now();
   const r = await run(process.execPath, args, { cwd: dir, timeoutMs, env: ENV() });
@@ -55,7 +58,7 @@ function summarize(file, r, ms, dir) {
 
 // A failing repro test only counts if it failed because of the code under test, not because the test itself is broken.
 export function brokenTest(out) {
-  const m = out.match(/SyntaxError[^\n]*|Cannot find module[^\n]*|ERR_MODULE_NOT_FOUND[^\n]*|does not provide an export named[^\n]*|Failed to (load url|resolve import)[^\n]*|No test files? found[^\n]*|Your test suite must contain at least one test|ReferenceError: (test|it|describe|expect|assert) is not defined|killed after \d+ms/);
+  const m = out.match(/SyntaxError[^\n]*|Cannot find module[^\n]*|ERR_MODULE_NOT_FOUND[^\n]*|does not provide an export named[^\n]*|Failed to (load url|resolve import)[^\n]*|No test files? found[^\n]*|Your test suite must contain at least one test|ReferenceError: (test|it|describe|expect|assert) is not defined|killed after \d+ms|ERR_ACCESS_DENIED[^\n]*/);
   return m ? m[0].slice(0, 200) : null;
 }
 
