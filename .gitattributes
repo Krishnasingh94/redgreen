@@ -1,0 +1,10 @@
+# Keep LF everywhere (also on Windows with core.autocrlf=true): patches, diffs and exact find/replace
+# edits are line-ending sensitive, and the sandboxed tests compare file contents byte for byte.
+* text=auto eol=lf
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary

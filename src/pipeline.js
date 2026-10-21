@@ -80,8 +80,11 @@ const FIX_SHAPE = 'Return ONE JSON object with: root_cause (string), change (str
 export async function runPipeline({ report, fixtureDir, emit }) {
   const run = { id: 'run_' + Date.now().toString(36), reportId: report.id, startedAt: new Date().toISOString(), steps: [], verdict: 'running', sandbox: sandboxInfo };
   const step = (type, data) => { const s = { type, at: new Date().toISOString(), ...data }; run.steps.push(s); emit?.(s); return s; };
-  const source = fs.readFileSync(path.join(fixtureDir, SOURCE), 'utf8');
-  const existingTests = fs.readFileSync(path.join(fixtureDir, EXISTING), 'utf8');
+  // Normalise to LF: a Windows checkout or editor can turn the fixture into CRLF, and then exact find/replace
+  // edits (written with \n) would never match. The patched file is written back with LF.
+  const lf = (t) => t.replace(/\r\n/g, '\n');
+  const source = lf(fs.readFileSync(path.join(fixtureDir, SOURCE), 'utf8'));
+  const existingTests = lf(fs.readFileSync(path.join(fixtureDir, EXISTING), 'utf8'));
 
   step('evidence', { events: report.events.length, redactions: report.redactions, description: report.description, screenshot: !!report.screenshot });
 
