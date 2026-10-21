@@ -73,15 +73,18 @@ export function normalizeFix(j) {
 }
 
 // chatJson throws these when the endpoint answered but the text wasn't a JSON object.
-const isBadOutput = (e) => /did not return valid JSON|empty model response/.test(e.message);
+export const isBadOutput = (e) => /did not return valid JSON|empty model response/.test(e.message);
 const REPRO_SHAPE = 'Return ONE JSON object with: hypothesis (string), evidence_ids (array of strings), expected (string), actual (string), test_name (string), test_code (string).';
 const FIX_SHAPE = 'Return ONE JSON object with: root_cause (string), change (string), functions (non-empty array of {"name": string, "code": string} where code is the complete rewritten function), explanation (string).';
 
 export async function runPipeline({ report, fixtureDir, emit }) {
   const run = { id: 'run_' + Date.now().toString(36), reportId: report.id, startedAt: new Date().toISOString(), steps: [], verdict: 'running', sandbox: sandboxInfo };
   const step = (type, data) => { const s = { type, at: new Date().toISOString(), ...data }; run.steps.push(s); emit?.(s); return s; };
-  const source = fs.readFileSync(path.join(fixtureDir, SOURCE), 'utf8');
-  const existingTests = fs.readFileSync(path.join(fixtureDir, EXISTING), 'utf8');
+  // Normalise to LF: a Windows checkout or editor can turn the fixture into CRLF, and then exact find/replace
+  // edits (written with \n) would never match. The patched file is written back with LF.
+  const lf = (t) => t.replace(/\r\n/g, '\n');
+  const source = lf(fs.readFileSync(path.join(fixtureDir, SOURCE), 'utf8'));
+  const existingTests = lf(fs.readFileSync(path.join(fixtureDir, EXISTING), 'utf8'));
 
   step('evidence', { events: report.events.length, redactions: report.redactions, description: report.description, screenshot: !!report.screenshot });
 
@@ -186,7 +189,7 @@ export async function runPipeline({ report, fixtureDir, emit }) {
 
 // If EVERY attempt in a phase failed to reach the model, nothing was tested: say so instead of implying
 // the model tried and failed. The verdict keeps its contract value; `reason` + `modelUnavailable` explain it.
-function markModelUnavailable(run, phase) {
+export function markModelUnavailable(run, phase) {
   const attempts = run.steps.filter((s) => s.type === 'model.start' && s.phase === phase).length;
   const errors = run.steps.filter((s) => s.type === 'model.error' && s.phase === phase);
   if (attempts && errors.length === attempts) {

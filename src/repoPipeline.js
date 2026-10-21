@@ -10,6 +10,26 @@ import { reproTestPath, frameworkHint, runOne, runSuite, checkRepoTest, applyRep
 import { lineDiff } from './diff.js';
 import { detectSite } from './web.js';
 import { runWebFlow, wantsWebsite } from './webPipeline.js';
+import { validateRepro, normalizeRepro, isBadOutput, markModelUnavailable } from './pipeline.js';
+
+// Same rule as the demo pipeline: the model is untrusted, so check its JSON before use and only ever emit
+// proposals with every field present and the right type (the UI renders them directly).
+const isStr = (v) => typeof v === 'string';
+export function validateRepoFix(j) {
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return ['response must be a JSON object'];
+  const errs = [];
+  if (!isStr(j.root_cause)) errs.push('"root_cause" must be a string');
+  if (!Array.isArray(j.functions) || !j.functions.length) errs.push('"functions" must be a non-empty array of {file, name, code}');
+  else j.functions.forEach((f, i) => { if (!f || !isStr(f.file) || !isStr(f.name) || !isStr(f.code)) errs.push(`functions[${i}] must be {"file": string, "name": string, "code": string}`); });
+  return errs;
+}
+export function normalizeRepoFix(j) {
+  const o = j && typeof j === 'object' && !Array.isArray(j) ? j : {};
+  const s = (v) => (isStr(v) ? v : v === undefined ? '' : JSON.stringify(v)).slice(0, 20000);
+  return { root_cause: s(o.root_cause), change: s(o.change), explanation: s(o.explanation), functions: Array.isArray(o.functions) ? o.functions.slice(0, 20).map((f) => ({ file: s(f?.file).slice(0, 300), name: s(f?.name).slice(0, 120), code: s(f?.code) })) : [] };
+}
+const REPRO_SHAPE = 'Return ONE JSON object with: hypothesis, expected, actual, test_name, test_code (strings) and evidence_ids (array of strings).';
+const FIX_SHAPE = 'Return ONE JSON object with: root_cause, change, explanation (strings) and functions (non-empty array of {"file", "name", "code"} strings).';
 
 const MAX_ATTEMPTS = 3;
 const temp = (a) => [0.2, 0.6, 0.9][a - 1] ?? 0.9;
@@ -62,21 +82,27 @@ export async function runRepoPipeline({ kase, reposDir, emit }) {
     step('model.start', { phase: 'reproduce', attempt });
     let ans;
     try { ans = await chatJson({ ...repoReproPrompt({ issue: kase.issue, project, files, testPath, exampleTest, hint: frameworkHint(project), feedback }), schemaName: 'repro', schema: REPRO_SCHEMA, temperature: temp(attempt) }); }
-    catch (e) { step('model.error', { phase: 'reproduce', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
-    const json = ans.json; json.test_code = String(json.test_code || '').replace(/^\s*```(?:[jt]s|javascript)?\s*\n?|```\s*$/g, '');
+    catch (e) {
+      if (isBadOutput(e)) { step('repro.rejected', { attempt, proposal: normalizeRepro(null), rejection: 'invalid_json', reason: `Model output was not valid JSON (${e.message}).` }); feedback = `Your response was not valid JSON. ${REPRO_SHAPE}`; }
+      else { step('model.error', { phase: 'reproduce', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; }
+      continue;
+    }
+    const invalid = validateRepro(ans.json);
+    if (invalid.length) { step('repro.rejected', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: normalizeRepro(ans.json), rejection: 'invalid_shape', reason: 'Model JSON has missing or wrong-type fields: ' + invalid.join('; ') }); feedback = `Your JSON did not match the schema:\n- ${invalid.join('\n- ')}\n${REPRO_SHAPE}`; continue; }
+    const json = normalizeRepro(ans.json); json.test_code = json.test_code.replace(/^\s*```(?:[jt]s|javascript)?\s*\n?|```\s*$/g, '');
     const meta = { attempt, model: ans.model, durationMs: ans.durationMs, proposal: json };
     const problems = checkRepoTest(json.test_code);
-    if (problems.length) { step('repro.rejected', { ...meta, reason: 'Safety check failed: ' + problems.join('; ') }); feedback = problems.join('\n'); continue; }
+    if (problems.length) { step('repro.rejected', { ...meta, rejection: 'unsafe', reason: 'Safety check failed: ' + problems.join('; ') }); feedback = problems.join('\n'); continue; }
     await resetRepo(dir);
     fs.mkdirSync(path.dirname(path.join(dir, testPath)), { recursive: true });
     fs.writeFileSync(path.join(dir, testPath), json.test_code);
     const result = await runOne(dir, project, testPath);
-    if (result.passed) { step('repro.rejected', { ...meta, result, reason: 'Test PASSED on the current code, so it does not reproduce the bug.' }); feedback = 'Your test passed on the current code, so it does not reproduce the issue. Re-read the issue and assert the behaviour it says is wrong.'; }
-    else if (result.broken) { step('repro.rejected', { ...meta, result, reason: `The test itself is broken (${result.broken}), not the code under test.` }); feedback = `Your test failed because the test itself is broken: ${result.broken}\nOutput:\n${result.output.slice(-1500)}`; }
+    if (result.passed) { step('repro.rejected', { ...meta, result, rejection: 'passed', reason: 'Test PASSED on the current code, so it does not reproduce the bug.' }); feedback = 'Your test passed on the current code, so it does not reproduce the issue. Re-read the issue and assert the behaviour it says is wrong.'; }
+    else if (result.broken) { step('repro.rejected', { ...meta, result, rejection: 'crashed', reason: `The test itself is broken (${result.broken}), not the code under test.` }); feedback = `Your test failed because the test itself is broken: ${result.broken}\nOutput:\n${result.output.slice(-1500)}`; }
     else { repro = { ...json, result, model: ans.model, durationMs: ans.durationMs }; step('repro.confirmed', { ...meta, result }); }
   }
   await resetRepo(dir);
-  if (!repro) { run.verdict = 'not_reproduced'; return finish(run, emit); }
+  if (!repro) { run.verdict = 'not_reproduced'; markModelUnavailable(run, 'reproduce'); return finish(run, emit); }
 
   // 4. patch + GREEN
   feedback = '';
@@ -86,14 +112,21 @@ export async function runRepoPipeline({ kase, reposDir, emit }) {
     step('model.start', { phase: 'fix', attempt });
     let ans;
     try { ans = await chatJson({ ...repoFixPrompt({ files, testPath, testCode: repro.test_code, failure: repro.result.output.slice(-2500), feedback }), schemaName: 'fix', schema: REPO_FIX_SCHEMA, temperature: temp(attempt) }); }
-    catch (e) { step('model.error', { phase: 'fix', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
-    const meta = { attempt, model: ans.model, durationMs: ans.durationMs, proposal: ans.json };
+    catch (e) {
+      if (isBadOutput(e)) { step('fix.rejected', { attempt, proposal: normalizeRepoFix(null), rejection: 'invalid_json', reason: `Model output was not valid JSON (${e.message}).` }); feedback = `Your response was not valid JSON. ${FIX_SHAPE}`; }
+      else { step('model.error', { phase: 'fix', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; }
+      continue;
+    }
+    const invalidFix = validateRepoFix(ans.json);
+    if (invalidFix.length) { step('fix.rejected', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: normalizeRepoFix(ans.json), rejection: 'invalid_shape', reason: 'Model JSON has missing or wrong-type fields: ' + invalidFix.join('; ') }); feedback = `Your JSON did not match the schema:\n- ${invalidFix.join('\n- ')}\n${FIX_SHAPE}`; continue; }
+    const proposal = normalizeRepoFix(ans.json);
+    const meta = { attempt, model: ans.model, durationMs: ans.durationMs, proposal };
     await resetRepo(dir);
     let before;
-    try { before = applyRepoPatch(dir, allowed, ans.json.functions); }
+    try { before = applyRepoPatch(dir, allowed, proposal.functions); }
     catch (e) {
-      step('fix.rejected', { ...meta, reason: 'Patch could not be applied: ' + e.message });
-      feedback = /changes nothing/.test(e.message) ? `You returned the code UNCHANGED. Your own root cause was: "${ans.json.root_cause}". Write the actual code change.` : e.message;
+      step('fix.rejected', { ...meta, rejection: 'patch_not_applicable', reason: 'Patch could not be applied: ' + e.message });
+      feedback = /changes nothing/.test(e.message) ? `You returned the code UNCHANGED. Your own root cause was: "${proposal.root_cause}". Write the actual code change.` : e.message;
       continue;
     }
     const diff = Object.keys(before).map((f) => lineDiff(before[f], fs.readFileSync(path.join(dir, f), 'utf8'), f)).join('\n');
@@ -105,19 +138,20 @@ export async function runRepoPipeline({ kase, reposDir, emit }) {
     await resetRepo(dir);
     const suiteOk = r2.passed || (!baseline.passed && r2.fail <= baseline.fail && r2.fail > 0);
     const results = [r1, { ...r2, passed: suiteOk, note: !r2.passed && suiteOk ? 'already failing before; no new failures' : undefined }];
-    if (r1.passed && suiteOk) { fix = { ...ans.json, diff, results, model: ans.model, durationMs: ans.durationMs }; step('fix.verified', { ...meta, diff, results }); }
+    if (r1.passed && suiteOk) { fix = { ...proposal, diff, results, model: ans.model, durationMs: ans.durationMs }; step('fix.verified', { ...meta, diff, results }); }
     else {
       const which = !r1.passed ? 'the reproduction test still fails' : 'it broke the repo\'s existing tests';
-      step('fix.rejected', { ...meta, diff, results, reason: `Patch applied but ${which}.` });
+      step('fix.rejected', { ...meta, diff, results, rejection: !r1.passed ? 'repro_still_fails' : 'broke_suite', reason: `Patch applied but ${which}.` });
       feedback = `After your patch, ${which}. Output:\n` + (!r1.passed ? r1.output : r2.output).slice(-1500);
     }
   }
   run.verdict = fix ? 'fixed_verified' : 'reproduced_not_fixed';
+  if (!fix) markModelUnavailable(run, 'fix');
   run.prMarkdown = repoReport({ kase, run, repro, fix, baseline, project, sha, testPath });
   return finish(run, emit);
 }
 
-function finish(run, emit) { run.finishedAt = new Date().toISOString(); emit?.({ type: 'done', verdict: run.verdict, runId: run.id }); return run; }
+function finish(run, emit) { run.finishedAt = new Date().toISOString(); emit?.({ type: 'done', verdict: run.verdict, runId: run.id, ...(run.reason ? { reason: run.reason, modelUnavailable: true } : {}) }); return run; }
 
 function repoReport({ kase, run, repro, fix, baseline, project, sha, testPath }) {
   const i = kase.issue;
