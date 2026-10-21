@@ -119,57 +119,107 @@ async function loadIssue(form) {
 document.addEventListener('submit', (e) => { const f = e.target.closest('.ghform'); if (f) { e.preventDefault(); if (!running) loadIssue(f); } });
 
 /* ---------- views ---------- */
-function setTab(name) { document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name)); }
+function setTab(name) {
+  if (name !== 'home') { document.body.classList.remove('on-home'); scopeStop?.(); scopeStop = null; } document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name)); }
 
+let scopeStop = null;
 function home() {
   setTab('home');
-  $('#main').innerHTML = `<section class="home3">
-    <div class="h3-hero">
-      <div class="h3-copy">
-        <p class="kicker"><span class="lamps sm"><i class="l r"></i><i class="l g"></i></span>Bug reproduction for GitHub · Gemma 4</p>
-        <h1 class="h3-title"><span class="no">No proof,</span><span class="yes">no fix.</span></h1>
-        <p class="lede">Issues say “it's broken.” RedGreen answers with a check that <em>fails on your code</em>, and shows where to look.</p>
-        <div class="ctas"><a class="cta-main magnet" href="#/reproduce">Reproduce an issue</a><a class="cta-alt magnet" href="#/github">Add to GitHub</a></div>
+  document.body.classList.add('on-home');
+  $('#main').innerHTML = `<section class="h4">
+    <div class="scope">
+      <canvas id="scopeCv" aria-hidden="true"></canvas>
+      <div class="scope-ui" aria-hidden="true"><span>CH1 · issue</span><span>CH2 · your code</span><span id="scopeV">probing…</span></div>
+      <div class="scope-copy">
+        <h1 class="mega"><span class="ln r" data-t="NO PROOF,">NO PROOF,</span><span class="ln g" data-t="NO FIX.">NO FIX.</span></h1>
+        <p class="tag4">RedGreen turns a GitHub issue into a <b>check that fails on your code</b>. Gemma 4 writes it. Your machine proves it.</p>
+        <div class="ctas"><a class="btn4 hot magnet" href="#/reproduce"><span>Reproduce an issue</span></a><a class="btn4 magnet" href="#/github"><span>Add to GitHub</span></a></div>
       </div>
-      <div class="rig" aria-hidden="true">
-        <div class="housing">
-          <div class="bulb red"><span class="shock"></span><span class="shock s2"></span></div>
-          <div class="bulb green"><span class="q">?</span></div>
-        </div>
-        <div class="rig-labels"><span>fails on your code</span><span>lights only with proof</span></div>
-      </div>
+      <div class="scroll-hint" aria-hidden="true">scroll</div>
     </div>
 
-    <div class="story">
+    <div class="ticker" aria-label="Lines from real RedGreen runs"><div class="tk">${tickerLines()}${tickerLines()}</div></div>
+
+    <div class="split">
+      <a class="half red" href="#/reproduce"><span class="k">CH1</span><b>FAILS</b><p>on the code as it is. Expected <i>$40.00</i>, got <i>$20.00</i>. Only a failure that matches the issue counts.</p><span class="go4">Reproduce →</span></a>
+      <a class="half green" href="#/model"><span class="k">CH2</span><b>PASSES</b><p>only when a fix makes that same check pass and nothing else breaks. Optional, and never pushed without you.</p><span class="go4">Configure →</span></a>
+    </div>
+
+    <div class="story s4">
       <div class="story-vis"><div class="vis" id="vis" data-stage="1">
         <div class="v-card v-issue"><div class="gh-head"><span class="state">Open</span><b>Cart total is wrong after changing quantity with a coupon applied</b></div><p>Expected <b>$40.00</b>, the total shows <b>$20.00</b>.</p><div class="cmt"><span class="who">samvit-srivastava</span> commented <code>/redgreen</code></div></div>
-        <div class="v-card v-find"><div class="v-row"><span class="spin"></span>Cloning <code>tiny-shop</code> · serving the site</div><div class="v-files"><code>app.js</code><code>index.html</code><code>style.css</code></div></div>
-        <div class="v-card v-gemma"><div class="v-row"><span class="gem"></span>Gemma 4 is reading the issue, the code and a screenshot</div><div class="v-shot"><i></i><i></i><i></i></div><div class="typing"><span></span><span></span><span></span></div></div>
+        <div class="v-card v-find"><div class="v-row"><span class="spin"></span>Cloned <code>tiny-shop</code>, serving the site</div><div class="v-files"><code>app.js</code><code>index.html</code><code>style.css</code></div></div>
+        <div class="v-card v-gemma"><div class="v-row"><span class="gem"></span>Gemma 4 reads the page</div>
+          <div class="mshop"><div class="mshop-h">Tiny Shop</div><div class="mshop-b"><div class="mp"><span>Headphones</span><em>$50.00</em></div><div class="mcart"><span>Headphones <i>1</i></span><span>SAVE20 ✓</span><span class="mt">Total <b>$20.00</b></span></div></div><span class="mscan"></span></div></div>
         <div class="v-card v-red"><div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div><h3><i class="dotred"></i>Reproduced</h3><pre class="mini"><span class="bad">✗ expect #total to show "$40.00"</span><span class="bad">   actual: "$20.00"</span></pre><p class="small">Where to look: <code>app.js</code> · <code>setQuantity()</code></p></div>
       </div></div>
       <div class="story-text">
-        <article data-step="1"><span class="sn3">01</span><h2>Someone opens an issue.</h2><p>“The total is wrong.” A maintainer comments <code>/redgreen</code>, or adds the <code>redgreen</code> label.</p></article>
-        <article data-step="2"><span class="sn3">02</span><h2>RedGreen finds the code.</h2><p>It clones the repo, serves the site or runs its tests, and picks the files the issue talks about with plain keyword search you can see.</p></article>
-        <article data-step="3"><span class="sn3">03</span><h2>Gemma 4 writes a check.</h2><p>It reads the issue, the code and a screenshot of the live page, then writes browser steps or a test. The issue is treated as data, never as instructions.</p></article>
-        <article data-step="4"><span class="sn3 red">04</span><h2>It has to fail. Or it doesn't count.</h2><p>RedGreen runs the check for real. Only a failure that matches the issue is accepted, and the proof is posted back: the steps, the real output, where to look.</p></article>
+        <article data-step="1"><span class="sn3">01 / ISSUE</span><h2>“The total is wrong.”</h2><p>A maintainer comments <code>/redgreen</code> or adds the <code>redgreen</code> label. That's the whole setup.</p></article>
+        <article data-step="2"><span class="sn3">02 / FIND</span><h2>Clone. Serve. Search.</h2><p>RedGreen clones the repo, runs the site or its tests, and picks the files the issue is about with keyword search you can see.</p></article>
+        <article data-step="3"><span class="sn3">03 / READ</span><h2>Gemma 4 looks at it.</h2><p>The issue, the code, and a real screenshot of the page. It writes browser steps or a test. Issue text is data, never instructions.</p></article>
+        <article data-step="4"><span class="sn3 red">04 / PROVE</span><h2>Red, or it didn't happen.</h2><p>The check runs for real and must fail the way the issue says. Then the proof lands on the issue: steps, real output, where to look.</p></article>
       </div>
     </div>
 
-    <div class="final">
-      <div class="final-l"><h2>Put it on your repos.</h2><p>Install RedGreen as a GitHub app in two clicks. Run Gemma 4 on your own laptop, or bring a Gemini API key.</p></div>
-      <div class="final-r"><a class="cta-main magnet" href="#/github">Set up the GitHub app</a><a class="cta-alt magnet" href="#/model">Bring your own key</a></div>
+    <div class="finale">
+      <h2 class="mega2">PROVE&nbsp;IT.</h2>
+      <p>Install RedGreen on your repos. Gemma 4 on your laptop, or your own Gemini API key.</p>
+      <div class="ctas"><a class="btn4 hot magnet" href="#/github"><span>Set up the GitHub app</span></a><a class="btn4 magnet" href="#/model"><span>Bring your own key</span></a></div>
+      <footer class="foot4"><span>Open source · Apache-2.0</span><a href="https://github.com/samvit-srivastava/redgreen" target="_blank" rel="noopener">github.com/samvit-srivastava/redgreen</a></footer>
     </div>
-    <footer class="foot2"><span>Open source · Apache-2.0 · never edits code by default</span><a href="https://github.com/samvit-srivastava/redgreen" target="_blank" rel="noopener">github.com/samvit-srivastava/redgreen</a></footer>
   </section>`;
-  // scroll story: the pinned visual follows the step in view
   const vis = $('#vis');
   const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { vis.dataset.stage = e.target.dataset.step; document.querySelectorAll('.story-text article').forEach((a) => a.classList.toggle('on', a === e.target)); } }), { rootMargin: '-45% 0px -45% 0px' });
   document.querySelectorAll('.story-text article').forEach((a) => io.observe(a));
-  // magnetic buttons
   document.querySelectorAll('.magnet').forEach((b) => {
-    b.addEventListener('pointermove', (e) => { const r = b.getBoundingClientRect(); b.style.transform = `translate(${(e.clientX - r.left - r.width / 2) * 0.18}px, ${(e.clientY - r.top - r.height / 2) * 0.25}px)`; });
+    b.addEventListener('pointermove', (e) => { const r = b.getBoundingClientRect(); b.style.transform = `translate(${(e.clientX - r.left - r.width / 2) * 0.2}px, ${(e.clientY - r.top - r.height / 2) * 0.3}px)`; });
     b.addEventListener('pointerleave', () => { b.style.transform = ''; });
   });
+  scopeStop?.(); scopeStop = runScope($('#scopeCv'));
+}
+
+function tickerLines() {
+  return ['✗ 6. expect_text "#total" "$40.00" · actual "$20.00"', '✓ cloned samvit-srivastava/tiny-shop', '✓ 5 existing tests pass, they do not catch this bug', '✗ AssertionError: 20 !== 40', '✓ Gemma 4 E4B · local · 21 s', '✓ app.js · index.html · style.css', '✗ Reproduced in a real browser', '✓ patch verified: same check passes']
+    .map((t) => `<span class="${t[0] === '✗' ? 'r' : 'g'}">${esc(t)}</span>`).join('');
+}
+
+// Oscilloscope: phosphor trace sweeping a grid; the pointer bends the signal. Red until the beam has "proof".
+function runScope(cv) {
+  if (!cv) return () => {};
+  const ctx = cv.getContext('2d');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let w, h, dpr, raf, t = 0, mx = 0.5, my = 0.5;
+  const trail = [];
+  const resize = () => { dpr = Math.min(2, devicePixelRatio || 1); w = cv.clientWidth; h = cv.clientHeight; cv.width = w * dpr; cv.height = h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+  const onMove = (e) => { const r = cv.getBoundingClientRect(); mx = (e.clientX - r.left) / r.width; my = (e.clientY - r.top) / r.height; };
+  resize(); addEventListener('resize', resize); cv.parentElement.addEventListener('pointermove', onMove);
+  const sig = (x, k) => {
+    const base = Math.sin(x * 9 + k * 2) * 0.18 + Math.sin(x * 23 - k * 3) * 0.06;
+    const bump = Math.exp(-Math.pow((x - mx) * 7, 2)) * (my - 0.5) * 1.6;           // pointer bends the wave
+    const glitch = Math.exp(-Math.pow((x - 0.62) * 30, 2)) * Math.sin(k * 40) * 0.25;  // the bug: a spike
+    return base + bump + glitch;
+  };
+  const frame = () => {
+    t += 0.016;
+    ctx.fillStyle = 'rgba(6,10,14,0.28)'; ctx.fillRect(0, 0, w, h);                   // phosphor persistence
+    ctx.strokeStyle = 'rgba(120,160,190,0.07)'; ctx.lineWidth = 1;
+    const gx = w / 12, gy = h / 8;
+    ctx.beginPath(); for (let i = 1; i < 12; i++) { ctx.moveTo(i * gx, 0); ctx.lineTo(i * gx, h); } for (let j = 1; j < 8; j++) { ctx.moveTo(0, j * gy); ctx.lineTo(w, j * gy); } ctx.stroke();
+    const sweep = (t * 0.22) % 1.15;
+    const proven = sweep > 1.0;
+    const col = proven ? '47,214,124' : '255,91,75';
+    ctx.lineWidth = 2.4; ctx.shadowBlur = 18; ctx.shadowColor = `rgba(${col},0.9)`; ctx.strokeStyle = `rgba(${col},0.95)`;
+    ctx.beginPath();
+    const end = Math.min(1, sweep);
+    for (let x = 0; x <= end; x += 0.003) { const y = h * (0.5 + sig(x, t) * 0.55); x === 0 ? ctx.moveTo(x * w, y) : ctx.lineTo(x * w, y); }
+    ctx.stroke(); ctx.shadowBlur = 0;
+    const bx = end * w, by = h * (0.5 + sig(end, t) * 0.55);
+    ctx.fillStyle = `rgba(${col},1)`; ctx.beginPath(); ctx.arc(bx, by, 4, 0, 6.3); ctx.fill();
+    const v = $('#scopeV'); if (v) v.textContent = proven ? 'PASS' : sweep > 0.62 ? 'FAIL · $20.00 ≠ $40.00' : 'probing…';
+    raf = requestAnimationFrame(frame);
+  };
+  if (reduce) { frame(); cancelAnimationFrame(raf); } else frame();
+  return () => { cancelAnimationFrame(raf); removeEventListener('resize', resize); };
 }
 
 function replayCard() {
@@ -215,7 +265,7 @@ async function modelPage() {
   $('#main').innerHTML = `<section class="pg model2">
     <h1 class="pg-h">Model</h1>
     <p class="pg-sub">RedGreen uses Gemma 4. Run it on this computer with LM Studio, or bring your own Google AI Studio key to use Gemma 4 through the Gemini API (that's how a deployed RedGreen works).</p>
-    <div class="now ${st.ok ? 'ok' : 'bad'}"><i></i><span>${st.ok ? `Using <b>${esc(st.model)}</b> ${st.provider === 'gemini' ? 'through the Gemini API' : 'on this computer'}` : esc(st.error || 'Not connected')}</span></div>
+    <div class="mnow ${st.ok ? 'ok' : 'bad'}"><i></i><span>${st.ok ? `Using <b>${esc(st.model)}</b> ${st.provider === 'gemini' ? 'through the Gemini API' : 'on this computer'}` : esc(st.error || 'Not connected')}</span></div>
     <div class="choices">
       <label class="choice ${m.provider === 'lmstudio' ? 'sel' : ''}"><input type="radio" name="prov" value="lmstudio" ${m.provider === 'lmstudio' ? 'checked' : ''}>
         <b>On this computer</b><span>LM Studio with Gemma 4 loaded. Private and free; code never leaves the machine.</span>
