@@ -130,6 +130,7 @@ export async function runRepoPipeline({ kase, reposDir, emit }) {
       continue;
     }
     const diff = Object.keys(before).map((f) => lineDiff(before[f], fs.readFileSync(path.join(dir, f), 'utf8'), f)).join('\n');
+    const patchedFiles = Object.fromEntries(Object.keys(before).map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8')]));
     fs.mkdirSync(path.dirname(path.join(dir, testPath)), { recursive: true });
     fs.writeFileSync(path.join(dir, testPath), repro.test_code);
     const r1 = await runOne(dir, project, testPath);
@@ -138,7 +139,11 @@ export async function runRepoPipeline({ kase, reposDir, emit }) {
     await resetRepo(dir);
     const suiteOk = r2.passed || (!baseline.passed && r2.fail <= baseline.fail && r2.fail > 0);
     const results = [r1, { ...r2, passed: suiteOk, note: !r2.passed && suiteOk ? 'already failing before; no new failures' : undefined }];
-    if (r1.passed && suiteOk) { fix = { ...proposal, diff, results, model: ans.model, durationMs: ans.durationMs }; step('fix.verified', { ...meta, diff, results }); }
+    if (r1.passed && suiteOk) {
+      fix = { ...proposal, diff, results, model: ans.model, durationMs: ans.durationMs };
+      run.patch = { files: { ...patchedFiles, [testPath]: repro.test_code }, testPath, sha }; // verified change + the new regression test
+      step('fix.verified', { ...meta, diff, results });
+    }
     else {
       const which = !r1.passed ? 'the reproduction test still fails' : 'it broke the repo\'s existing tests';
       step('fix.rejected', { ...meta, diff, results, rejection: !r1.passed ? 'repro_still_fails' : 'broke_suite', reason: `Patch applied but ${which}.` });

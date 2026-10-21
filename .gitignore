@@ -11,3 +11,4 @@ data/repos/
 docs/context/
 docs/KRISHNA_TASKS.md
 docs/PROMPT_KRISHNA_BACKEND.md
+data/bot-state.json

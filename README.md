@@ -16,6 +16,22 @@ AI coding tools are good at *saying* they fixed a bug. RedGreen won't let them u
 
 Everything runs on a laptop with **Gemma 4 E4B in LM Studio**. Issue text, page content and evidence are treated as untrusted data in every prompt.
 
+## GitHub bot (runs on your laptop, no server needed)
+
+RedGreen can watch your repos (or **your fork** of someone else's project) and answer issues by itself:
+
+1. Create a fine-grained token limited to those repos with **Issues**, **Contents** and **Pull requests** set to read and write.
+2. Start it (PowerShell):
+   ```powershell
+   $env:GITHUB_TOKEN = "<your token>"
+   $env:REDGREEN_BOT_REPOS = "you/tiny-shop,you/your-fork"
+   npm run dev:github
+   ```
+3. On a watched repo, add the label **`redgreen`** to an issue, or comment **`/redgreen`**. Only people with write access can trigger it, because it runs the repo's code on your machine.
+4. **Fork workflow (Hacktoberfest):** in your fork, comment `/redgreen https://github.com/upstream/project/issues/42`. RedGreen reads the upstream issue, reproduces and fixes it on your fork, opens a PR there titled `Fix upstream/project#42`, and comments a one-click link to send that PR upstream. It never posts on projects you don't control.
+
+The bot comments when it starts, opens a PR **only when the fix is verified red → green**, and otherwise comments what it could reproduce so a human can take over. Open dashboards follow bot runs live.
+
 ## Why this is different
 
 | | Typical AI fix tools | RedGreen |

@@ -7,6 +7,7 @@ import { redact } from './src/redact.js';
 import { runPipeline } from './src/pipeline.js';
 import { runRepoPipeline } from './src/repoPipeline.js';
 import { parseIssueUrl, fetchIssue } from './src/github.js';
+import { createBot } from './src/bot.js';
 import { status as modelStatus, modelConfig } from './src/model.js';
 import { sandboxInfo } from './src/sandbox.js';
 import { COUPONS } from './fixtures/shop/src/cart.js';
@@ -98,13 +99,8 @@ const server = http.createServer(async (req, res) => {
       if (!REPO_CODE_ALLOWED) return send(res, 403, { error: REPO_MODE_OFF });
       const { url } = await readBody(req, 10000);
       let ref; try { ref = parseIssueUrl(url); } catch (e) { return send(res, 400, { error: e.message }); }
-      let fetched; try { fetched = await fetchIssue(ref); } catch (e) { return send(res, 502, { error: e.message }); }
-      // Issue text is untrusted user content: redact it before it is stored or sent to the model.
-      const { value: issue, count: issueRedactions } = redact(fetched);
-      const id = newId('gh');
-      const rec = { schema: 'redgreen.issue/v1', kind: 'github', id, description: issue.title, issue, repo: ref, events: [], redactions: issueRedactions, savedAt: new Date().toISOString() };
-      fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
-      return send(res, 201, { id, title: issue.title });
+      let rec; try { rec = await createCase(ref); } catch (e) { return send(res, 502, { error: e.message }); }
+      return send(res, 201, { id: rec.id, title: rec.issue.title });
     }
     if (p === '/api/reports' && req.method === 'GET') return send(res, 200, listJson(REPORTS, (r) => typeof r.id === 'string' && Array.isArray(r.events)).map(({ id, description, savedAt, events, redactions, sample, screenshot, kind, repo }) => ({ id, description, savedAt, events: events.length, redactions, sample: !!sample, screenshot: !!screenshot, kind: kind || 'report', repo: repo ? `${repo.owner}/${repo.repo}#${repo.number}` : undefined })));
     let m;
@@ -126,6 +122,14 @@ const server = http.createServer(async (req, res) => {
       if (!f || !fs.existsSync(f)) return send(res, 404, { error: 'not found' });
       if (m[2]) return send(res, 200, JSON.parse(fs.readFileSync(f, 'utf8')).prMarkdown || '# No verified result', 'text/markdown; charset=utf-8');
       return send(res, 200, fs.readFileSync(f, 'utf8'));
+    }
+    if (p === '/api/live') {
+      // Bot runs, streamed to any open dashboard so it can follow along live.
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+      liveClients.add(res);
+      const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+      req.on('close', () => { clearInterval(ping); liveClients.delete(res); });
+      return;
     }
     if ((m = p.match(/^\/api\/analyze\/([^/]+)$/))) {
       // Server-Sent Events stream of pipeline steps
@@ -156,7 +160,38 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ---- shared helpers for the GitHub bot
+const liveClients = new Set();
+const broadcast = (ev) => { for (const c of liveClients) c.write(`data: ${JSON.stringify(ev)}\n\n`); };
+async function createCase(ref) {
+  // ref = the repo we clone and push to; ref.upstream (optional) = where the issue text lives (fork workflow).
+  const src = ref.upstream || ref;
+  const fetched = await fetchIssue(src);
+  // Issue text is untrusted user content: redact it before it is stored or sent to the model.
+  const { value: issue, count } = redact(fetched);
+  const id = newId('gh');
+  const repo = { owner: ref.owner, repo: ref.repo, number: ref.upstream ? ref.upstream.number : ref.number };
+  const rec = { schema: 'redgreen.issue/v1', kind: 'github', id, description: issue.title, issue, repo, upstream: ref.upstream || null, events: [], redactions: count, savedAt: new Date().toISOString() };
+  fs.writeFileSync(path.join(REPORTS, id + '.json'), JSON.stringify(rec, null, 2));
+  return rec;
+}
+async function runCaseForBot(kase) {
+  while (busy) await new Promise((r) => setTimeout(r, 2000)); // one run at a time, shared with the dashboard
+  busy = true;
+  try {
+    broadcast({ type: 'bot.start', caseId: kase.id, repo: `${kase.repo.owner}/${kase.repo.repo}` });
+    const run = await runRepoPipeline({ kase, reposDir: REPOS, emit: (ev) => broadcast({ ...ev, caseId: kase.id }) });
+    fs.writeFileSync(path.join(RUNS, run.id + '.json'), JSON.stringify(run, null, 2));
+    return run;
+  } finally { busy = false; }
+}
+const BOT_STATE = path.join(DATA, 'bot-state.json');
+const bot = REPO_CODE_ALLOWED
+  ? createBot({ createCase, runCase: runCaseForBot, loadState: () => readJsonSafe(BOT_STATE), saveState: (st) => fs.writeFileSync(BOT_STATE, JSON.stringify(st, null, 2)) })
+  : { status: { enabled: false, error: 'The bot needs GitHub mode: start with npm run dev:github.' }, start() {} };
+
 server.listen(PORT, '127.0.0.1', () => {
+  bot.start();
   console.log(`RedGreen  → http://localhost:${PORT}`);
   console.log(`Demo shop → http://localhost:${PORT}/shop/`);
   console.log(`Model     → ${modelConfig.baseUrl} ${modelConfig.model ? '(' + modelConfig.model + ')' : '(auto-detect Gemma)'}`);

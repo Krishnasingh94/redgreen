@@ -52,6 +52,12 @@ async function loadStatus() {
     const iso = s.sandbox.permissionModel.startsWith('--');
     $('#sbxBadge').innerHTML = `<span>${iso ? 'Tests run sealed: read-only, no processes' : 'Tests run without file isolation'}, ${s.sandbox.timeoutMs / 1000} s limit</span>`;
     $('#sbxBadge').title = `Node ${s.sandbox.node}, ${s.sandbox.permissionModel}`;
+    const bb = $('#botBadge');
+    if (s.bot?.enabled) {
+      bb.hidden = false; bb.className = 'badge ' + (s.bot.current ? 'on' : '');
+      bb.innerHTML = s.bot.current ? `<i class="dot"></i><span>Bot working on <strong>${esc(s.bot.current.repo)}#${s.bot.current.number}</strong></span>` : `<i class="dot"></i><span>Bot watching ${s.bot.repos.map(esc).join(', ')}</span>`;
+      bb.title = `Label an issue "${s.bot.label}" or comment /redgreen`;
+    } else bb.hidden = true;
   } catch { $('#modelBadge').className = 'badge down'; $('#modelBadge').innerHTML = '<i class="dot"></i><span>RedGreen server unreachable</span>'; }
 }
 function prettyModel(id) {
@@ -346,4 +352,25 @@ function analyze(id) {
     $('#notice').innerHTML = '<div class="notice err">Lost the connection to the RedGreen server. Check the terminal running it, then try again.</div>'; };
 }
 
-intro(); loadStatus(); loadLists(); setInterval(loadStatus, 15000);
+/* ---------- follow bot runs live ---------- */
+let botCase = null;
+function followBot() {
+  const es = new EventSource('/api/live');
+  es.onmessage = async (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === 'bot.start') {
+      if (running) return; // the person is busy with their own run
+      botCase = ev.caseId; running = true;
+      await openReport(ev.caseId);
+      const go = $('#go'); if (go) { go.disabled = true; go.lastChild.textContent = 'Bot is working'; }
+      $('#notice').innerHTML = `<div class="notice">The GitHub bot picked up this issue on ${esc(ev.repo)}. Following its run live.</div>`;
+      loadStatus();
+      return;
+    }
+    if (!botCase || ev.caseId !== botCase) return;
+    if (ev.type === 'done') { running = false; botCase = null; const go = $('#go'); if (go) { go.disabled = false; go.lastChild.textContent = 'Run again'; } finish(ev.verdict, ev.runId); loadStatus(); return; }
+    render(ev, true);
+  };
+}
+
+intro(); loadStatus(); loadLists(); followBot(); setInterval(loadStatus, 10000);

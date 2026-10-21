@@ -88,6 +88,7 @@ export async function runWebFlow({ kase, dir, site, project, step, run }) {
       if (r1.passed && suiteOk) {
         step('fix.verified', { ...meta, diff, results, before: repro.result.screenshot, after: r1.screenshot });
         run.fix = { ...ans.json, diff };
+        run.patch = { files: Object.fromEntries(Object.keys(before).map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8')])), steps: repro.steps };
         await resetRepo(dir);
         return { repro, fix: { ...ans.json, diff, results }, baseline };
       }
