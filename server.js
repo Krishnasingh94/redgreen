@@ -290,6 +290,13 @@ async function botApi(req, res, p) {
   return send(res, 404, { error: 'not found' });
 }
 
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`\nPort ${PORT} is already in use: another RedGreen (or other app) is running.\nClose that terminal, or on Windows run:\n  Get-NetTCPConnection -LocalPort ${PORT} -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }\nor start on another port:  $env:PORT=3001; npm run dev:github\n`);
+    process.exit(1);
+  }
+  throw e;
+});
 server.listen(PORT, '127.0.0.1', () => {
   bot.start();
   console.log(`RedGreen  → http://localhost:${PORT}`);
