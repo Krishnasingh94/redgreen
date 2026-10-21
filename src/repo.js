@@ -82,8 +82,18 @@ function bodyEnd(src, from) {
   }
   return -1;
 }
+// Models often send "function setQuantity(id, qty)" or "cart.setQuantity" instead of "setQuantity".
+export function cleanName(name) {
+  const s = String(name || '').trim();
+  if (s === '*') return s;
+  const m = s.replace(/^(export\s+)?(default\s+)?(async\s+)?(function\s*\*?\s*|const\s+|let\s+|var\s+|static\s+|get\s+|set\s+)*/, '').match(/([A-Za-z_$][\w$]*)\s*(?:\(|=|$)/);
+  return m ? m[1].split('.').pop() : s.replace(/[^\w$]/g, '');
+}
+export function functionNames(src) {
+  return [...new Set([...src.matchAll(/(?:function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function|\([^)]*\)\s*=>|[\w$]+\s*=>))/g)].map((m) => m[1] || m[2]))];
+}
 export function locateFunction(src, name) {
-  const n = name.replace(/[^\w$]/g, '').replace(/\$/g, '\\$');
+  const n = cleanName(name).replace(/[^\w$]/g, '').replace(/\$/g, '\\$');
   const pats = [
     new RegExp(`(^|\\n)([ \\t]*)(export\\s+(default\\s+)?)?(async\\s+)?function\\s*\\*?\\s*${n}\\s*\\(`),
     new RegExp(`(^|\\n)([ \\t]*)(export\\s+)?(const|let|var)\\s+${n}\\s*=\\s*(async\\s+)?(function\\b[^{]*|\\([^)]*\\)\\s*=>\\s*|[\\w$]+\\s*=>\\s*)(?=\\{)`),
@@ -109,13 +119,14 @@ export function applyRepoPatch(dir, allowedFiles, functions) {
     if (!allowedFiles.includes(file)) throw new Error(`change ${i + 1}: "${file}" is not one of the files shown to you (${allowedFiles.join(', ')})`);
     let code = String(f.code || '').replace(/^\s*```(?:[jt]sx?|javascript|typescript)?\s*\n?|```\s*$/g, '');
     let src = changed.get(file) ?? fs.readFileSync(path.join(dir, file), 'utf8');
-    if (f.name === '*' ) {
+    if (String(f.name).trim() === '*') {
       if (src.split('\n').length > 200) throw new Error(`"${file}" is too large to rewrite whole; change individual functions instead`);
       if (code.trim() === src.trim()) continue;
       changed.set(file, code.trimEnd() + '\n'); continue;
     }
+    f.name = cleanName(f.name);
     const loc = locateFunction(src, f.name);
-    if (!loc) throw new Error(`function "${f.name}" was not found in ${file}`);
+    if (!loc) throw new Error(`function "${f.name}" was not found in ${file}. Use "name" = just the function name; functions in ${file}: ${functionNames(src).join(', ') || 'none'}`);
     const own = locateFunction(code, f.name);
     if (!own || code.slice(own.end).trim()) throw new Error(`change ${i + 1}: code must be exactly one complete "${f.name}" with balanced braces`);
     code = code.slice(own.start, own.end).trim();

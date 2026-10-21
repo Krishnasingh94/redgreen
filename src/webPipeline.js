@@ -1,11 +1,12 @@
 // Website flow (called from the GitHub pipeline once the repo is cloned): screenshot -> browser steps must FAIL -> patch -> same steps PASS.
 import fs from 'node:fs';
+import vm from 'node:vm';
 import path from 'node:path';
 import { chatJson } from './model.js';
 import { WEB_REPRO_SCHEMA, WEB_FIX_SCHEMA, webReproPrompt, webFixPrompt } from './prompts.js';
 import { serveStatic, startDevServer, launchBrowser, snapshotPage, validateSteps, runSteps } from './web.js';
 import { rankFiles, excerpt, WEB_EXT } from './locate.js';
-import { runSuite, applyRepoPatch, resetRepo } from './repo.js';
+import { runSuite, applyRepoPatch, resetRepo, locateFunction, cleanName } from './repo.js';
 import { installDeps } from './github.js';
 import { lineDiff } from './diff.js';
 
@@ -55,6 +56,11 @@ export async function runWebFlow({ kase, dir, site, project, step, run }) {
       const result = await runSteps(browser, server.url, json.steps);
       if (result.passed) { step('repro.rejected', { ...meta, result, reason: 'Every check PASSED on the current site, so the steps do not reproduce the bug.' }); feedback = 'All your expect_* checks passed on the current site. Re-read the issue: assert the value the issue says is WRONG should be correct.\nRun log:\n' + result.output; }
       else if (result.broken) { step('repro.rejected', { ...meta, result, reason: `The steps themselves failed: ${result.broken}` }); feedback = `Your steps could not run: ${result.broken}. Use selectors from the PAGE OUTLINE.\nRun log:\n${result.output}`; }
+      else if (!matchesIssue(issue, result.assertionFailure)) {
+        const nums = issueNumbers(issue);
+        step('repro.rejected', { ...meta, result, rejection: 'unsupported_actual', reason: `The page showed ${result.assertionFailure.actual}, but the issue reports different values (${nums.join(', ')}). These steps reproduce something else, not this issue.` });
+        feedback = `Your steps produced ${result.assertionFailure.actual}, but the issue says the page shows one of: ${nums.join(', ')}. Follow the issue's steps EXACTLY, in order, with no extra clicks, so the page shows the wrong value the issue describes.\nRun log:\n${result.output}`;
+      }
       else { repro = { ...json, result, model: ans.model, durationMs: ans.durationMs }; step('repro.confirmed', { ...meta, result }); }
     }
     if (!repro) { run.verdict = 'not_reproduced'; return null; }
@@ -66,7 +72,7 @@ export async function runWebFlow({ kase, dir, site, project, step, run }) {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       step('model.start', { phase: 'fix', attempt });
       let ans;
-      try { ans = await chatJson({ ...webFixPrompt({ files: files.map((f) => ({ ...f, text: f.lines <= 260 ? fs.readFileSync(path.join(dir, f.path), 'utf8') : f.text })), steps: repro.steps, failure, feedback }), schemaName: 'web_fix', schema: WEB_FIX_SCHEMA, images: [repro.result.screenshot], temperature: temp(attempt) }); }
+      try { ans = await chatJson({ ...webFixPrompt({ files: files.map((f) => ({ ...f, text: f.lines <= 260 ? fs.readFileSync(path.join(dir, f.path), 'utf8') : f.text })), steps: repro.steps, failure, feedback }), schemaName: 'web_fix', schema: WEB_FIX_SCHEMA, temperature: temp(attempt) }); }
       catch (e) { step('model.error', { phase: 'fix', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
       const meta = { attempt, model: ans.model, durationMs: ans.durationMs, proposal: { ...ans.json, functions: ans.json.changes } };
       await resetRepo(dir);
@@ -97,7 +103,7 @@ export async function runWebFlow({ kase, dir, site, project, step, run }) {
   }
 }
 
-function applyWebChanges(dir, allowed, changes) {
+export function applyWebChanges(dir, allowed, changes) {
   if (!Array.isArray(changes) || !changes.length) throw new Error('patch has no changes');
   if (changes.length > 5) throw new Error('patch too large (max 5 changes)');
   const before = {};
@@ -105,15 +111,55 @@ function applyWebChanges(dir, allowed, changes) {
     const file = String(c?.file || '').replace(/\\/g, '/').replace(/^\.?\//, '');
     if (!allowed.includes(file)) throw new Error(`change ${i + 1}: "${file}" is not one of the files shown (${allowed.join(', ')})`);
     const abs = path.join(dir, file);
-    before[file] ??= fs.readFileSync(abs, 'utf8');
-    if (c.name) { applyRepoPatch(dir, allowed, [{ file, name: c.name, code: c.code }]); continue; }
-    const src = fs.readFileSync(abs, 'utf8');
+    before[file] ??= fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n');
+    const raw = fs.readFileSync(abs, 'utf8');
+    const crlf = raw.includes('\r\n');
+    const src = raw.replace(/\r\n/g, '\n');
+    if (crlf) fs.writeFileSync(abs, src); // work in LF; restored by resetRepo afterwards
+    c.find = String(c.find || '').replace(/\r\n/g, '\n');
+    const hits = c.find ? src.split(c.find).length - 1 : 0;
+    // Prefer an exact, unique snippet replacement when the model gave one (models often fill both fields).
+    if (hits === 1 && !(c.name && c.name !== '*' && looksLikeWholeFunction(c.code, c.name))) {
+      let code = String(c.code ?? '');
+      const bal = (t) => (t.match(/{/g) || []).length - (t.match(/}/g) || []).length;
+      const missing = bal(code) - bal(c.find); // replacement dropped closing braces that the snippet had
+      if (missing > 0 && /}\s*$/.test(c.find)) code = code.replace(/\s*$/, '') + '\n' + '}'.repeat(missing);
+      fs.writeFileSync(abs, src.replace(c.find, () => code)); continue;
+    }
+    if (c.name) {
+      let code = String(c.code || '');
+      if (c.name !== '*' && !locateFunction(code, c.name) && looksLikeWholeFunction(code + '\n}', c.name)) code += '\n}'; // repair a missing final brace
+      applyRepoPatch(dir, allowed, [{ file, name: c.name, code }]);
+      continue;
+    }
     if (!c.find) throw new Error(`change ${i + 1}: give either "name" (function or "*") or an exact "find" snippet`);
-    const n = src.split(c.find).length - 1;
-    if (!n) throw new Error(`change ${i + 1}: "find" snippet not found in ${file}`);
-    if (n > 1) throw new Error(`change ${i + 1}: "find" snippet matches ${n} places in ${file}; include more context`);
-    fs.writeFileSync(abs, src.replace(c.find, () => c.code));
+    if (!hits) throw new Error(`change ${i + 1}: "find" snippet not found in ${file}`);
+    throw new Error(`change ${i + 1}: "find" snippet matches ${hits} places in ${file}. Include a few more surrounding lines so it is unique, or rewrite the whole function with "name" instead`);
   }
   if (Object.entries(before).every(([f, s]) => fs.readFileSync(path.join(dir, f), 'utf8') === s)) throw new Error('patch changes nothing');
+  for (const f of Object.keys(before)) {
+    if (!/\.(c?js)$/.test(f)) continue;
+    const code = fs.readFileSync(path.join(dir, f), 'utf8');
+    try { new vm.Script(code, { filename: f }); }
+    catch (e) { if (e instanceof SyntaxError && !/import|export/.test(e.message)) { for (const [g, txt] of Object.entries(before)) fs.writeFileSync(path.join(dir, g), txt); throw new Error(`the patched ${f} has a JavaScript syntax error (${e.message}). Return complete, balanced code.`); } }
+  }
   return before;
+}
+
+function looksLikeWholeFunction(code, name) {
+  const loc = locateFunction(String(code || ''), cleanName(name));
+  return !!loc && !String(code).slice(loc.end).trim() && !String(code).slice(0, loc.start).trim();
+}
+
+// Oracle (deterministic): numbers the issue reports. If the issue states values and the failing check shows a number,
+// that number must be one the issue mentions; otherwise the steps reproduced a different situation.
+export function issueNumbers(issue) {
+  return [...new Set((String(issue.title) + ' ' + String(issue.body)).match(/\d+(?:[.,]\d+)?/g) || [])].map((n) => Number(n.replace(',', '.'))).filter((n) => Number.isFinite(n));
+}
+export function matchesIssue(issue, af) {
+  if (!af) return true;
+  const seen = (String(af.actual).match(/\d+(?:[.,]\d+)?/g) || []).map((n) => Number(n.replace(',', '.')));
+  const nums = issueNumbers(issue);
+  if (!seen.length || nums.length < 2) return true;
+  return seen.some((n) => nums.includes(n));
 }

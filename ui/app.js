@@ -210,6 +210,7 @@ function render(s, live) {
       if (live) $('#files').classList.add('live');
       break;
     case 'baseline':
+      if (s.none) { stage(1, 'done', 'none'); attempt(`<li><i class="mk info"></i><div><h4>No automated tests in this repo</h4><p class="sub">The browser check is the proof.</p></div></li>`); break; }
       stage(1, s.result.passed ? 'done' : 'red', secs(s.result.durationMs));
       attempt(`<li><i class="mk ${s.result.passed ? 'info' : 'fail'}"></i><div><h4>${s.result.passed ? (s.result.pass ? `${state.report.kind === 'github' ? 'The repo\'s' : 'Your'} ${s.result.pass} existing tests pass` : 'The existing tests pass') : 'The existing tests already fail'}</h4>
         <p class="sub">${s.result.passed ? 'So they do not catch this bug.' : 'Fix those first; results below may be unreliable.'}</p><div class="res">${chip(s.result)}</div>${outBlock(s.result)}</div></li>`);
@@ -315,7 +316,12 @@ async function showOutcome(runId, verdict) {
 }
 
 /* ---------- actions ---------- */
-const swap = (fn) => (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) ? document.startViewTransition(fn).updateCallbackDone : Promise.resolve(fn());
+const swap = (fn) => {
+  if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve(fn());
+  const t = document.startViewTransition(fn);
+  t.finished.catch(() => {}); t.ready.catch(() => {}); // a newer click can skip this transition; that's fine
+  return t.updateCallbackDone;
+};
 async function openReport(id) { const r = await getJSON('/api/reports/' + encodeURIComponent(id)); await swap(() => shell(r, null)); }
 async function openRun(id) {
   const run = await getJSON('/api/runs/' + encodeURIComponent(id));

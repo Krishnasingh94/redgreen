@@ -40,7 +40,7 @@ export function run(cmd, args, { cwd, timeoutMs = 120000, env } = {}) {
 
 export async function cloneRepo({ owner, repo }, dest) {
   fs.rmSync(dest, { recursive: true, force: true });
-  const r = await run('git', ['clone', '--depth', '1', '--quiet', `https://github.com/${owner}/${repo}.git`, dest], { timeoutMs: 120000 });
+  const r = await run('git', ['clone', '-c', 'core.autocrlf=false', '--depth', '1', '--quiet', `https://github.com/${owner}/${repo}.git`, dest], { timeoutMs: 120000 });
   if (r.code !== 0) throw new Error('git clone failed: ' + r.out.slice(-400));
   const head = await run('git', ['rev-parse', '--short', 'HEAD'], { cwd: dest });
   return head.out.trim();
