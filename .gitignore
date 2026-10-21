@@ -8,3 +8,6 @@ data/repos/
 .demo-repo/
 !data/reports/rpt_sample_coupon.json
 .demo-site/
+docs/context/
+docs/KRISHNA_TASKS.md
+docs/PROMPT_KRISHNA_BACKEND.md
