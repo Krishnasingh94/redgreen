@@ -86,3 +86,6 @@ body.on-home::before{display:none}
 .ex-label{display:inline-flex;align-items:center;gap:8px;margin:0 0 4px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--steel)}
 .ex-label i{width:7px;height:7px;border-radius:50%;background:var(--amber)}
 .ex-label a{color:var(--ink2)}
+
+.msearch .mq{display:flex;justify-content:space-between;border:1px solid #C9BBA5;padding:3px 6px;color:#2B2118;font-style:normal}
+.msearch .mt b{color:#C8331F}

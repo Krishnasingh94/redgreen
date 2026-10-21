@@ -129,7 +129,7 @@ function home() {
   $('#main').innerHTML = `<section class="h4">
     <div class="scope">
       <canvas id="scopeCv" aria-hidden="true"></canvas>
-      <div class="scope-ui" aria-hidden="true"><span>CH1 · issue</span><span>CH2 · your code</span><span id="scopeV">probing…</span></div>
+      <div class="scope-ui" aria-hidden="true"><span>CH1 · issue</span><span>CH2 · your code</span></div>
       <div class="scope-copy">
         <h1 class="mega"><span class="ln r" data-t="NO PROOF,">NO PROOF,</span><span class="ln g" data-t="NO FIX.">NO FIX.</span></h1>
         <p class="tag4">RedGreen turns a GitHub issue into a <b>check that fails on your code</b>. Gemma 4 writes it. Your machine proves it.</p>
@@ -141,18 +141,18 @@ function home() {
     <div class="ticker" aria-label="Lines from real RedGreen runs"><div class="tk">${tickerLines()}${tickerLines()}</div></div>
 
     <div class="split">
-      <a class="half red" href="#/reproduce"><span class="k">CH1</span><b>FAILS</b><p>on the code as it is. Expected <i>$40.00</i>, got <i>$20.00</i>. Only a failure that matches the issue counts.</p><span class="go4">Reproduce →</span></a>
+      <a class="half red" href="#/reproduce"><span class="k">CH1</span><b>FAILS</b><p>on the code as it is. Expected <i>3 results</i>, got <i>0</i>. Only a failure that matches the issue counts.</p><span class="go4">Reproduce →</span></a>
       <a class="half green" href="#/model"><span class="k">CH2</span><b>PASSES</b><p>only when a fix makes that same check pass and nothing else breaks. Optional, and never pushed without you.</p><span class="go4">Configure →</span></a>
     </div>
 
     <div class="story s4">
       <div class="story-vis"><div class="vis" id="vis" data-stage="1">
-        <p class="ex-label"><i></i>Example: a real run on <a href="https://github.com/samvit-srivastava/tiny-shop/issues/1" target="_blank" rel="noopener">samvit-srivastava/tiny-shop#1</a></p>
-        <div class="v-card v-issue"><div class="gh-head"><span class="state">Open</span><b>Cart total is wrong after changing quantity with a coupon applied</b></div><p>Expected <b>$40.00</b>, the total shows <b>$20.00</b>.</p><div class="cmt"><span class="who">samvit-srivastava</span> commented <code>/redgreen</code></div></div>
-        <div class="v-card v-find"><div class="v-row"><span class="spin"></span>Cloned <code>tiny-shop</code>, serving the site</div><div class="v-files"><code>app.js</code><code>index.html</code><code>style.css</code></div></div>
+        <p class="ex-label"><i></i>Example run · how a reproduction plays out</p>
+        <div class="v-card v-issue"><div class="gh-head"><span class="state">Open</span><b>Search finds nothing when the query has a capital letter</b></div><p>Searching <b>"Dark Mode"</b> shows <b>No results</b>. Lowercase <b>"dark mode"</b> finds 3 articles.</p><div class="cmt"><span class="who">maintainer</span> commented <code>/redgreen</code></div></div>
+        <div class="v-card v-find"><div class="v-row"><span class="spin"></span>Clones the repo, serves the site</div><div class="v-files"><code>search.js</code><code>index.html</code><code>articles.json</code></div></div>
         <div class="v-card v-gemma"><div class="v-row"><span class="gem"></span>Gemma 4 reads the page</div>
-          <div class="mshop"><div class="mshop-h">Tiny Shop</div><div class="mshop-b"><div class="mp"><span>Headphones</span><em>$50.00</em></div><div class="mcart"><span>Headphones <i>1</i></span><span>SAVE20 ✓</span><span class="mt">Total <b>$20.00</b></span></div></div><span class="mscan"></span></div></div>
-        <div class="v-card v-red"><div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div><h3><i class="dotred"></i>Reproduced</h3><pre class="mini"><span class="bad">✗ expect #total to show "$40.00"</span><span class="bad">   actual: "$20.00"</span></pre><p class="small">Where to look: <code>app.js</code> · <code>setQuantity()</code></p></div>
+          <div class="mshop"><div class="mshop-h">Help Center</div><div class="mshop-b msearch"><div class="mp"><span>Search</span><em class="mq">Dark Mode<i>⌕</i></em></div><div class="mcart"><span>Results</span><span class="mt"><b>No results found</b></span></div></div><span class="mscan"></span></div></div>
+        <div class="v-card v-red"><div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div><h3><i class="dotred"></i>Reproduced</h3><pre class="mini"><span class="bad">✗ expect .result count to be 3</span><span class="bad">   actual: 0</span></pre><p class="small">Where to look: <code>search.js</code> · <code>matchArticle()</code></p></div>
       </div></div>
       <div class="story-text">
         <article data-step="1"><span class="sn3">01 / ISSUE</span><h2>“The total is wrong.”</h2><p>A maintainer comments <code>/redgreen</code> or adds the <code>redgreen</code> label. That's the whole setup.</p></article>
@@ -180,7 +180,7 @@ function home() {
 }
 
 function tickerLines() {
-  return ['✗ 6. expect_text "#total" "$40.00" · actual "$20.00"', '✓ cloned samvit-srivastava/tiny-shop', '✓ 5 existing tests pass, they do not catch this bug', '✗ AssertionError: 20 !== 40', '✓ Gemma 4 E4B · local · 21 s', '✓ app.js · index.html · style.css', '✗ Reproduced in a real browser', '✓ patch verified: same check passes']
+  return ['✗ expect .result count 3 · actual 0', '✓ repo cloned, site served', '✓ existing tests pass, they do not catch this bug', '✗ AssertionError: 0 !== 3', '✓ Gemma 4 E4B · local', '✓ search.js · index.html · articles.json', '✗ Reproduced in a real browser', '✓ patch verified: same check passes']
     .map((t) => `<span class="${t[0] === '✗' ? 'r' : 'g'}">${esc(t)}</span>`).join('');
 }
 
@@ -216,7 +216,6 @@ function runScope(cv) {
     ctx.stroke(); ctx.shadowBlur = 0;
     const bx = end * w, by = h * (0.5 + sig(end, t) * 0.55);
     ctx.fillStyle = `rgba(${col},1)`; ctx.beginPath(); ctx.arc(bx, by, 4, 0, 6.3); ctx.fill();
-    const v = $('#scopeV'); if (v) v.textContent = proven ? 'PASS' : sweep > 0.62 ? 'FAIL · $20.00 ≠ $40.00' : 'probing…';
     raf = requestAnimationFrame(frame);
   };
   if (reduce) { frame(); cancelAnimationFrame(raf); } else frame();
@@ -226,17 +225,17 @@ function runScope(cv) {
 function replayCard() {
   return `<figure class="replay" aria-label="A real exchange on GitHub: an issue, then RedGreen's reply">
     <div class="gh-card issue-card">
-      <div class="gh-head"><span class="state">Open</span><b>Cart total is wrong after changing quantity with a coupon applied</b></div>
-      <p>Set quantity to 3, apply SAVE20, set it back to 1. Expected <b>$40.00</b>, the total shows <b>$20.00</b>.</p>
-      <div class="cmt"><span class="who">samvit-srivastava</span> commented <code>/redgreen</code></div>
+      <div class="gh-head"><span class="state">Open</span><b>Search finds nothing when the query has a capital letter</b></div>
+      <p>Search for "Dark Mode". Expected <b>3 results</b>, the page shows <b>No results</b>.</p>
+      <div class="cmt"><span class="who">maintainer</span> commented <code>/redgreen</code></div>
     </div>
     <div class="gh-card bot-card">
       <div class="gh-head"><span class="avatar"><i class="l r"></i><i class="l g"></i></span><b>redgreen</b><span class="botpill">bot</span></div>
       <h3><i class="dotred"></i>Reproduced</h3>
-      <pre class="mini"><span class="ok">✓ add Headphones, quantity 3, apply SAVE20</span><span class="ok">✓ set quantity back to 1</span><span class="bad">✗ expect #total to show "$40.00"</span><span class="bad">   actual: "$20.00"</span></pre>
-      <p class="small where">Where to look: <code>app.js</code> · <code>setQuantity()</code></p>
+      <pre class="mini"><span class="ok">✓ open /help</span><span class="ok">✓ type "Dark Mode" into #search</span><span class="bad">✗ expect .result count to be 3</span><span class="bad">   actual: 0</span></pre>
+      <p class="small where">Where to look: <code>search.js</code> · <code>matchArticle()</code></p>
     </div>
-    <figcaption>Real reply on <a href="https://github.com/samvit-srivastava/tiny-shop/issues/1" target="_blank" rel="noopener">tiny-shop#1</a></figcaption>
+    <figcaption>Example of what RedGreen posts on an issue</figcaption>
   </figure>`;
 }
 
