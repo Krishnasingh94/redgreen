@@ -6,10 +6,44 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { spawnSync } from 'node:child_process';
+
 const PERM_FLAG = process.allowedNodeEnvironmentFlags.has('--permission') ? '--permission'
   : process.allowedNodeEnvironmentFlags.has('--experimental-permission') ? '--experimental-permission' : null;
 
-export const sandboxInfo = { permissionModel: PERM_FLAG ?? 'unavailable (upgrade Node to >=22.13 for fs isolation)', timeoutMs: 15000, node: process.version };
+// Node's permission-model path syntax differs across versions/OSes (e.g. Node 20 on Windows aborts on "dir\\*").
+// Probe once at startup: pick the first read-allow variant that (a) lets code read files inside the dir and
+// (b) still blocks writes. If none works, run without fs isolation and say so in the UI.
+const READ_VARIANTS = [
+  (d) => [`--allow-fs-read=${d}`],
+  (d) => [`--allow-fs-read=${path.join(d, '*')}`],
+  (d) => [`--allow-fs-read=${d}`, `--allow-fs-read=${path.join(d, '*')}`],
+];
+function probe() {
+  if (!PERM_FLAG) return null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redgreen-probe-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'sub'));
+    fs.writeFileSync(path.join(dir, 'sub', 'data.txt'), 'ok');
+    const script = path.join(dir, 'sub', 'probe.mjs');
+    fs.writeFileSync(script, `import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
+const here = path.dirname(fileURLToPath(import.meta.url));
+const read = fs.readFileSync(path.join(here, 'data.txt'), 'utf8') === 'ok';
+let wrote = false; try { fs.writeFileSync(path.join(here, 'w.txt'), 'x'); wrote = true; } catch {}
+console.log(JSON.stringify({ read, wrote }));`);
+    for (const v of READ_VARIANTS) {
+      const r = spawnSync(process.execPath, [PERM_FLAG, ...v(dir), script], { encoding: 'utf8', timeout: 10000, windowsHide: true });
+      try { const o = JSON.parse(r.stdout.trim().split('\n').pop()); if (r.status === 0 && o.read && !o.wrote) return v; } catch {}
+    }
+    return null;
+  } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+}
+const READ_ARGS = probe();
+
+export const sandboxInfo = {
+  permissionModel: READ_ARGS ? PERM_FLAG : `unavailable on Node ${process.version} here — install Node 22 LTS for fs isolation`,
+  timeoutMs: 15000, node: process.version,
+};
 
 export function createWorkspace(fixtureDir) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redgreen-'));
@@ -24,8 +58,8 @@ export function removeWorkspace(dir) {
 export function runTestFile(workspace, relFile, timeoutMs = sandboxInfo.timeoutMs) {
   const file = path.join(workspace, relFile);
   const args = [];
-  if (PERM_FLAG) args.push(PERM_FLAG, `--allow-fs-read=${workspace}${path.sep}*`, `--allow-fs-read=${workspace}`);
-  args.push('--test-reporter=spec', file);
+  if (READ_ARGS) args.push(PERM_FLAG, ...READ_ARGS(workspace));
+  args.push('--no-warnings', '--test-reporter=spec', file);
   const env = { NODE_ENV: 'test', NO_COLOR: '1', FORCE_COLOR: '0' };
   if (process.platform === 'win32' && process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
   const started = Date.now();

@@ -104,7 +104,11 @@ $('#checkout').addEventListener('click', async () => {
   if (res.ok) show('Order placed: ' + money(body.charged), 'ok');
   else { console.error('Checkout failed: ' + body.error); show('Checkout failed: ' + body.error, 'err'); }
 });
-$('#report').addEventListener('click', () => { $('#sent').textContent = ''; $('#dlg').showModal(); });
+$('#report').addEventListener('click', () => {
+  const n = getBundle('').events.length;
+  $('#sent').innerHTML = n ? `<span style="color:var(--muted)">${n} events captured on this page will be attached.</span>` : '<span class="err">No actions captured yet — use the shop first.</span>';
+  $('#dlg').showModal();
+});
 $('#cancel').addEventListener('click', () => $('#dlg').close());
 $('#send').addEventListener('click', async () => {
   const bundle = getBundle($('#desc').value);

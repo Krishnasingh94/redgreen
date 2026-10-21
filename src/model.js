@@ -6,7 +6,7 @@ export const modelConfig = {
   model: process.env.GEMMA_MODEL || '', // empty = auto-detect first loaded Gemma model in LM Studio
   apiKey: process.env.GEMMA_API_KEY || 'lm-studio',
   temperature: Number(process.env.GEMMA_TEMPERATURE ?? 0.2),
-  maxTokens: Number(process.env.GEMMA_MAX_TOKENS ?? 3000),
+  maxTokens: Number(process.env.GEMMA_MAX_TOKENS ?? 6000),
   timeoutMs: Number(process.env.GEMMA_TIMEOUT_MS ?? 180000),
 };
 
@@ -84,7 +84,11 @@ export async function chatJson({ system, user, schemaName, schema, images = [] }
     if (e.status !== 400 && e.status !== 422) throw e;
     data = await http('/chat/completions', base); // endpoint doesn't support structured output; parse leniently
   }
-  const msg = data.choices?.[0]?.message || {};
-  const json = extractJson(msg.content || '');
+  const choice = data.choices?.[0] || {};
+  const msg = choice.message || {};
+  if (!msg.content && choice.finish_reason === 'length') throw new Error(`model hit max_tokens (${modelConfig.maxTokens}) before answering — raise GEMMA_MAX_TOKENS or the context length in LM Studio`);
+  let json;
+  try { json = extractJson(msg.content || ''); }
+  catch (e) { throw new Error(`${e.message}${choice.finish_reason === 'length' ? ' (output was cut off: max_tokens reached)' : ''}. Got: ${String(msg.content || '').slice(0, 200)}`); }
   return { json, model, durationMs: Date.now() - started, usage: data.usage || null };
 }

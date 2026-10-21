@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chatJson } from './model.js';
 import { reproPrompt, fixPrompt, REPRO_SCHEMA, FIX_SCHEMA } from './prompts.js';
-import { checkTestCode, applyEdits } from './guard.js';
+import { checkTestCode, applyEdits, replaceFunctions, normalizeTestCode } from './guard.js';
 import { createWorkspace, removeWorkspace, runTestFile, sandboxInfo } from './sandbox.js';
 import { lineDiff } from './diff.js';
 import { buildReport } from './report.js';
@@ -34,6 +34,7 @@ export async function runPipeline({ report, fixtureDir, emit }) {
     try { ans = await chatJson({ ...reproPrompt({ evidence: { description: report.description, env: report.env, events: report.events }, source, existingTests, feedback, hasScreenshot: !!report.screenshot }), schemaName: 'repro', schema: REPRO_SCHEMA, images: report.screenshot ? [report.screenshot] : [] }); }
     catch (e) { step('model.error', { phase: 'reproduce', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
     const { json } = ans;
+    json.test_code = normalizeTestCode(json.test_code);
     const problems = checkTestCode(json.test_code);
     if (problems.length) { step('repro.rejected', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: json, reason: 'Static safety check failed: ' + problems.join('; ') }); feedback = problems.join('\n'); continue; }
     ws = createWorkspace(fixtureDir);
@@ -62,7 +63,7 @@ export async function runPipeline({ report, fixtureDir, emit }) {
     try { ans = await chatJson({ ...fixPrompt({ source, testCode: repro.test_code, failure: repro.result.output.slice(-2500), feedback }), schemaName: 'fix', schema: FIX_SCHEMA }); }
     catch (e) { step('model.error', { phase: 'fix', attempt, error: e.message }); feedback = `Your response could not be used: ${e.message}`; continue; }
     let patched;
-    try { patched = applyEdits(source, ans.json.edits); }
+    try { patched = Array.isArray(ans.json.functions) ? replaceFunctions(source, ans.json.functions) : applyEdits(source, ans.json.edits); }
     catch (e) { step('fix.rejected', { attempt, model: ans.model, durationMs: ans.durationMs, proposal: ans.json, reason: 'Patch could not be applied: ' + e.message }); feedback = e.message; continue; }
     const diff = lineDiff(source, patched);
     ws = createWorkspace(fixtureDir);

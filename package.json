@@ -7,6 +7,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node server.js",
+    "dev": "node --watch-path=src --watch-path=server.js server.js",
     "test": "node --test \"test/*.test.js\"",
     "smoke": "node scripts/smoke-model.js",
     "reset": "node scripts/reset.js",

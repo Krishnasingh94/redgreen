@@ -27,3 +27,13 @@ test('extractJson handles fences and preambles', () => {
   assert.deepEqual(extractJson('Sure!\n```json\n{"a": "}{"}\n```'), { a: '}{' });
   assert.deepEqual(extractJson('x {"b":1} y'), { b: 1 });
 });
+
+import { replaceFunctions } from '../src/guard.js';
+test('replaceFunctions swaps a whole function and rejects bad patches', () => {
+  const src = "export function a(x) {\n  if (x) { return '}'; }\n  return 1;\n}\n\nexport function b() {\n  return 2;\n}\n";
+  const out = replaceFunctions(src, [{ name: 'a', code: 'export function a(x) {\n  return 3;\n}' }]);
+  assert.match(out, /return 3/); assert.match(out, /function b\(\)/); assert.doesNotMatch(out, /return 1/);
+  assert.throws(() => replaceFunctions(src, [{ name: 'zz', code: 'export function zz() {}' }]), /does not exist/);
+  assert.throws(() => replaceFunctions(src, [{ name: 'a', code: 'export function a(x) {\n  return 3;\n}\nreturn x;' }]), /exactly one complete function/);
+  assert.throws(() => replaceFunctions(src, [{ name: 'b', code: 'export function b() {\n  return 2;\n}' }]), /changes nothing/);
+});
