@@ -1,5 +1,5 @@
 // Tiny cart module used by the demo shop.
-// SYNTHETIC DEMO FIXTURE: contains an intentional bug for the RedGreen demo.
+// SYNTHETIC DEMO FIXTURE: contains intentional bugs for the RedGreen demo.
 
 export const COUPONS = {
   SAVE10: 0.10,
@@ -36,9 +36,9 @@ export function setQuantity(cart, id, qty) {
 }
 
 export function applyCoupon(cart, code) {
+  cart.coupon = COUPONS[code] !== undefined ? code : null;
   const pct = COUPONS[code];
   if (pct === undefined) throw new Error('Invalid coupon');
-  cart.coupon = code;
   cart.discount = round2(subtotal(cart) * pct);
   return cart;
 }
