@@ -23,12 +23,13 @@ function hl(code) {
   return out + esc(code.slice(last));
 }
 const codeBlock = (c) => `<pre><code>${hl(String(c ?? '').trim())}</code></pre>`;
-const diffBlock = (d) => `<pre class="diff"><code>${String(d).split('\n').map((l) => {
+const diffBlock = (d, live) => { let n = 0; return `<pre class="diff${live ? ' live' : ''}"><code>${String(d).split('\n').map((l) => {
+  const i = `style="--i:${n++}"`;
   if (l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@')) return `<span class="hd">${esc(l)}</span>`;
-  if (l.startsWith('+')) return `<span class="add">${esc(l)}</span>`;
-  if (l.startsWith('-')) return `<span class="del">${esc(l)}</span>`;
+  if (l.startsWith('+')) return `<span class="add" ${i}>${esc(l)}</span>`;
+  if (l.startsWith('-')) return `<span class="del" ${i}>${esc(l)}</span>`;
   return `<span>${esc(l)}</span>`;
-}).join('')}</code></pre>`;
+}).join('')}</code></pre>`; };
 const assertion = (out = '') => ({ actual: out.match(/actual:\s*([^\n,]+)/)?.[1]?.trim(), expected: out.match(/expected:\s*([^\n,]+)/)?.[1]?.trim() });
 
 /* ---------- status badges ---------- */
@@ -100,7 +101,7 @@ function shell(report, savedRun) {
   <div id="notice"></div>
   <section class="proof" id="proof" aria-live="polite">
     <div class="side-p" id="pRed"><div class="lamp"></div><div class="cap">On the code as it is</div><div class="verdictword">Waiting</div><div class="fact">Gemma's test must fail here.</div></div>
-    <div class="wire" aria-hidden="true"><svg viewBox="0 0 64 24"><path d="M2 12 H54 M46 4 L56 12 L46 20"/></svg></div>
+    <div class="wire" aria-hidden="true"><svg viewBox="0 0 84 28" preserveAspectRatio="none"><path class="base" d="M4 14 H70"/><path class="flow" d="M4 14 H70"/><path class="head" d="M66 5 L80 14 L66 23 Z"/></svg></div>
     <div class="side-p" id="pGreen"><div class="lamp"></div><div class="cap">After Gemma's patch</div><div class="verdictword">Waiting</div><div class="fact">The same test must pass here.</div></div>
   </section>
   <ol class="track" id="track">
@@ -155,11 +156,17 @@ function stage(k, cls, tm) {
 function addTime(k, ms) { state.stages[k] = (state.stages[k] || 0) + ms; stage(k, $(`#track [data-k="${k}"]`).className, secs(state.stages[k])); }
 
 /* ---------- step rendering ---------- */
-function attempt(html) { const att = $('#att'); if (att.dataset.started !== '1') { att.innerHTML = ''; att.dataset.started = '1'; } $('#liveAtt')?.remove(); att.insertAdjacentHTML('beforeend', html); }
+let liveMode = false;
+function attempt(html) {
+  const att = $('#att'); if (att.dataset.started !== '1') { att.innerHTML = ''; att.dataset.started = '1'; }
+  $('#liveAtt')?.remove(); att.insertAdjacentHTML('beforeend', html);
+  if (liveMode) att.lastElementChild.classList.add('enter');
+}
 const chip = (r) => `<span class="chip ${r.passed ? 'pass' : 'fail'}"><b>${r.passed ? 'PASS' : 'FAIL'}</b>${esc(r.file.replace('test/', ''))}, ${r.pass} passed, ${r.fail} failed</span>`;
 const outBlock = (r, label = 'Test output') => `<details><summary>${label}</summary><pre>${esc(r.output.trim())}</pre></details>`;
 
 function render(s, live) {
+  liveMode = live;
   switch (s.type) {
     case 'evidence': stage(0, 'done', 'ready'); break;
     case 'baseline':
@@ -170,8 +177,8 @@ function render(s, live) {
     case 'model.start': {
       const k = s.phase === 'reproduce' ? 2 : 3;
       stage(k, 'now');
-      if (s.phase === 'reproduce') setPanel('#pRed', 'busy', 'Writing', `Gemma is writing a test from the evidence. <span id="tick">0 s</span>`);
-      else setPanel('#pGreen', 'busy', 'Patching', `Gemma is rewriting the code. <span id="tick">0 s</span>`);
+      if (s.phase === 'reproduce') setPanel('#pRed', 'busy', 'Writing', `Gemma is writing a test from the evidence <span class="tick" id="tick">0 s</span>`);
+      else $('#proof').classList.add('flowing'), setPanel('#pGreen', 'busy', 'Patching', `Gemma is rewriting the code <span class="tick" id="tick">0 s</span>`);
       if (live) {
         const t0 = Date.now(); clearInterval(tick);
         tick = setInterval(() => { const el = $('#tick'); if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + ' s'; }, 250);
@@ -195,6 +202,8 @@ function render(s, live) {
       $('#hypSect').hidden = false;
       $('#hyp').innerHTML = `<p>${esc(s.proposal.hypothesis)}</p><dl class="ev"><dt>Expected</dt><dd class="exp">${esc(s.proposal.expected)}</dd><dt>Actual</dt><dd class="act">${esc(s.proposal.actual)}</dd><dt>Evidence</dt><dd>${(s.proposal.evidence_ids || []).map(esc).join(', ') || 'none cited'}</dd></dl>`;
       $('#tl').innerHTML = timeline(state.report, s.proposal.evidence_ids || []);
+      if (live) { $('#tl').classList.add('live'); [...$('#tl').querySelectorAll('li.cited')].forEach((li, i) => li.style.setProperty('--i', i)); }
+      if (live) $('#hypSect').classList.add('reveal');
       break; }
     case 'fix.rejected':
       clearInterval(tick); addTime(3, s.durationMs || 0);
@@ -206,7 +215,9 @@ function render(s, live) {
       for (const r of s.results) addTime(4, r.durationMs);
       stage(4, 'green');
       const existing = s.results[1];
+      $('#proof').classList.remove('flowing');
       setPanel('#pGreen', 'green', 'Passes', `Same test passes. All ${existing.pass} existing tests still pass.`, live);
+      if (live) { const p = $('#proof'); p.classList.remove('celebrate'); void p.offsetWidth; p.classList.add('celebrate'); }
       attempt(`<li><i class="mk ok"></i><div><h4>Patch verified</h4><p class="sub">Attempt ${s.attempt}, ${secs(s.durationMs)}</p><div class="res">${s.results.map(chip).join('')}</div>${outBlock(s.results[0], 'Passing output')}</div></li>`);
       state.verified = s;
       break; }
@@ -219,7 +230,7 @@ function render(s, live) {
 const money = (v) => /^-?\d+(\.\d+)?$/.test(v) ? '$' + Number(v).toFixed(2) : v;
 
 function finish(verdict, runId) {
-  clearInterval(tick);
+  clearInterval(tick); $('#proof')?.classList.remove('flowing');
   if (verdict === 'not_reproduced') {
     stage(2, 'red');
     setPanel('#pRed', 'amber', 'Unproven', 'No test failed for the reported reason. Nothing was changed.');
@@ -234,11 +245,11 @@ function finish(verdict, runId) {
 async function showOutcome(runId, verdict) {
   const md = await fetch(`/api/runs/${runId}/pr.md`).then((r) => r.text());
   const v = state.verified;
-  const sect = $('#outSect'); sect.hidden = false;
+  const sect = $('#outSect'); sect.hidden = false; sect.classList.add('reveal');
   $('#outTitle').textContent = v ? 'Verified fix' : 'Report for the maintainer';
   const patch = v ? `${v.diff}\n` : '';
   $('#out').innerHTML = `
-    ${v ? `<p class="change"><b>What changed:</b> ${esc(v.proposal.change || v.proposal.root_cause)}</p>${diffBlock(v.diff)}` : '<p>The bug is reproduced by a failing test, but no patch was verified. The report below includes the test so a person can take it from here.</p>'}
+    ${v ? `<p class="change"><b>What changed:</b> ${esc(v.proposal.change || v.proposal.root_cause)}</p>${diffBlock(v.diff, true)}` : '<p>The bug is reproduced by a failing test, but no patch was verified. The report below includes the test so a person can take it from here.</p>'}
     <div class="actions" style="margin-top:12px">
       <button class="btn" id="copyPr">Copy PR description</button>
       <a class="btn" href="/api/runs/${esc(runId)}/pr.md" download="redgreen-${esc(runId)}.md">Download report</a>
@@ -250,11 +261,12 @@ async function showOutcome(runId, verdict) {
 }
 
 /* ---------- actions ---------- */
-async function openReport(id) { const r = await getJSON('/api/reports/' + encodeURIComponent(id)); shell(r, null); }
+const swap = (fn) => (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) ? document.startViewTransition(fn).updateCallbackDone : Promise.resolve(fn());
+async function openReport(id) { const r = await getJSON('/api/reports/' + encodeURIComponent(id)); await swap(() => shell(r, null)); }
 async function openRun(id) {
   const run = await getJSON('/api/runs/' + encodeURIComponent(id));
   const report = await getJSON('/api/reports/' + encodeURIComponent(run.reportId));
-  shell(report, { id: run.id, startedAt: run.startedAt });
+  await swap(() => shell(report, { id: run.id, startedAt: run.startedAt }));
   state.savedRun = run.id;
   for (const s of run.steps) render(s, false);
   finish(run.verdict, run.id);
