@@ -16,3 +16,5 @@ data/bot-config.json
 *.pem
 # GitHub-mode cases contain real people's issue text: keep them local
 data/reports/gh_*.json
+data/eval/
+data/model-config.json
